@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import patients, samples
+from . import patients, request_check, samples
 from .case import Case
 from .constraints import Constraints
 from .synth import PRESETS
@@ -251,7 +251,20 @@ class Store:
         self.targets[tid] = {"case_id": case_id, "target": target, "info": info,
                             "constraints": constraints or self.constraints_for(case_id),
                             "input_revision": st["revision"] if st else None}
+        # the dentist's sentences this target answers (core/request_check): the agent turn's that makes it and those of
+        # the target it was edited from (직접 이동, parent_target_id); every plan staged from it is checked (put_plan)
+        asks = self._asks(self.targets.get(info.get("parent_target_id") or "", {}).get("asks", ()))
+        if asks:
+            self.targets[tid]["asks"] = asks
         return tid
+
+    @staticmethod
+    def _asks(inherited) -> list:
+        asks = list(inherited)
+        turn = request_check.TURN.get()
+        if turn is not None and turn not in asks:
+            asks.append(turn)
+        return asks
 
     def put_plan(self, case_id: str, target_id: str | None, stages: list[dict], info: dict,
                  violations: list[dict], stage_cap: int | None, strategy: str,
@@ -265,6 +278,11 @@ class Store:
             "review": {"status": "not_requested", "attempts": 0, "message": "", "error": None},
             "approval": None,
             "input_revision": self.targets.get(target_id or "", {}).get("input_revision")}
+        # checked here, where every plan is made, not in the tools that make them: a later path that stages the same
+        # target (…/targets/{id}/stages) made a plan the check never saw (Codex re-check 2026-10-03)
+        asks = self._asks(self.targets.get(target_id or "", {}).get("asks", ()))
+        if asks:
+            self.plans[pid]["request_check"] = request_check.check_all(asks, c)
         self._persist(pid)
         return pid
 
@@ -293,8 +311,8 @@ class Store:
                 # a rule plan's run (the strategies one POST /api/plan tried): only on those plans, so the approval
                 # fingerprint of every other plan, and of plan files written before it, stays what it was
                 **({"rule_run": dict(p["rule_run"])} if p.get("rule_run") else {}),
-                # the agent turn's sentence against the plan's conditions (core/request_check), the same way: only on
-                # plans an agent turn made
+                # the dentist's sentence against the plan's conditions (core/request_check), the same way: only on
+                # plans made from a target a sentence asked for (put_plan)
                 **({"request_check": dict(p["request_check"])} if p.get("request_check") else {}),
                 "stages": [{str(i): np.round(v, 4).tolist() for i, v in st.items()} for st in p["stages"]],
                 # degrees about each crown's vertical axis through its centroid (pivot), per stage
@@ -320,8 +338,11 @@ class Store:
             raise ValueError("규칙 위반 계획은 승인할 수 없습니다.")
         if p["review"]["status"] not in ("passed", "skipped"):
             raise ValueError("검토가 완료되지 않았습니다. 검토 실패/미실행 계획은 승인할 수 없습니다.")
-        check = p.get("request_check") or {}
-        if check.get("status") == "mismatch":
+        check = p.get("request_check")
+        if check is None and self.targets.get(p.get("target_id") or "", {}).get("asks"):
+            # fail-closed: a plan of a target a sentence asked for came by a path that left the check out
+            raise ValueError("요청 문장과 대조하지 않은 계획은 승인할 수 없습니다. 다시 계획한 뒤 승인하세요.")
+        if (check or {}).get("status") == "mismatch":
             raise ValueError("요청 문장과 계획의 조건이 다릅니다: " + "; ".join(check.get("reasons_ko") or []) +
                              ". 조건을 고쳐 다시 계획한 뒤 승인하세요.")
         p["approval"] = {"status": "approved", "approved_at": datetime.now(timezone.utc).isoformat(),
@@ -339,14 +360,6 @@ class Store:
         self.require_current_input(p["case_id"], p.get("input_revision"))
         if not p["approval"] or p["approval"]["fingerprint"] != self.fingerprint(pid):
             raise ValueError("의사가 현재 계획을 승인한 뒤 내보낼 수 있습니다.")
-
-    def set_request_check(self, pid: str, result: dict) -> dict:
-        """Record core/request_check's verdict on a plan an agent turn made. Like a review, it resets approval."""
-        record = self._record(pid)
-        record["request_check"] = dict(result)
-        record["approval"] = None
-        self._persist(pid)
-        return dict(result)
 
     def set_review(self, pid: str, result: dict) -> dict:
         record = self._record(pid)

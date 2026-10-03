@@ -8,6 +8,7 @@ numbers) and Tooth keeps 2..15. (b) blocks approval when the sentence and the pl
 import asyncio
 import json
 
+import numpy as np
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -61,6 +62,16 @@ def run_tools(calls, run):
 
 def C(**changes):
     return Constraints().patched(changes)
+
+
+def turn_target(lock, step=None, stage=False):
+    """A /chat/stream turn on REVISION that locks `lock` (FDI) and makes one target: its target id, or with `stage`
+    the plan the turn stages from it."""
+    run = PlanRun("rc", "moderate", None, Constraints(), step=step)
+    run.text, run.opened = REVISION, Constraints()
+    out = run_tools([("set_constraints", {"lock": lock}), ("propose_target", {"strategy": "expansion_ipr"})] +
+                    [("plan_stages", lambda out: {"target_id": out[1]["target_id"]})] * stage, run)
+    return out[2]["plan_id"] if stage else out[1]["target_id"]
 
 
 # ---- (a) the tool takes FDI; everything behind it keeps app numbers -------------------------------------------------
@@ -186,6 +197,12 @@ PLAN_ADD = "기존 25번 고정에 13번도"
     ("14번 고정하고 24번도.", C(), C(lock=[5, 12])),                                     # «도» takes the field before it
     ("13번 고정 풀고 14번도.", C(lock=[5, 6, 13]), C(lock=[13])),                        # ... and its action (release)
     ("13번 고정해줘. 14번도 봐줘.", C(), C(lock=[6])),                                   # not across a sentence: 14 unread
+    # «도» with a verb of its own takes that verb (Codex re-check 2026-10-03): 빼 releases, 고정 adds, another is unread
+    ("25번 고정하고 13번도 빼줘", C(lock=[13]), C(lock=[13])),                          # 13 released (it was not locked)
+    ("25번 고정하고 13번도 빼줘", C(lock=[6, 13]), C(lock=[13])),
+    ("25번 고정하고 13번도 고정", C(lock=[13]), C(lock=[6, 13])),
+    ("25번 고정하고 13번도 같이 고정해줘", C(lock=[13]), C(lock=[6, 13])),
+    ("25번 고정하고 13번도 봐줘", C(lock=[13]), C(lock=[13])),                          # 봐줘 is no field's verb
     ("발치 없이 12개월 안에 끝나는 계획 짜줘. 앞니 총생부터 풀고.", C(), C(stage_cap=26, order="anterior_first")),
     ("IPR 은 앞니 12,11,21,22번 빼고 해줘.", C(), C(ipr_exclude=[7, 8, 9, 10])),
     ("14번과 24번 발치로 계획 짜줘.", C(), C(extraction=[5, 12])),
@@ -204,6 +221,10 @@ def test_requests_that_were_applied_are_not_blocked(text, before, after):
     (PLAN_ADD, C(lock=[13]), C(lock=[6]), ["고정 치아에 요청한 25번이 없습니다"]),       # the old tooth dropped
     ("13번 고정하고 12개월 안에", C(), C(lock=[6]), ["요청한 12개월(단계 상한 26단계)과 저장된 단계 상한(없음)이 다릅니다"]),
     ("14번 고정하고 24번도.", C(), C(lock=[5]), ["고정 치아에 요청한 24번이 없습니다"]),
+    ("25번 고정하고 13번도 빼줘", C(lock=[13]), C(lock=[6, 13]), ["고정 치아에 요청에 없던 13번이 들어갔습니다"]),
+    ("25번 고정하고 13번도 고정", C(lock=[13]), C(lock=[13]), ["고정 치아에 요청한 13번이 없습니다"]),
+    ("25번 고정하고 13번도 봐줘", C(lock=[13]), C(lock=[6, 13]), ["고정 치아에 요청에 없던 13번이 들어갔습니다"]),
+    ("25번 고정하고 13번도 빼지 마", C(lock=[6, 13]), C(lock=[13]), ["고정 치아에 요청한 13번이 없습니다"]),   # not a release
     ("12개월 안에 끝나게 다시 짜줘.", C(stage_cap=26), C(lock=[6], stage_cap=26),
      ["고정 치아가 요청 문장에 없이 바뀌었습니다(없음 → 13번)"]),
     ("14번과 24번 발치로 계획 짜줘.", C(), C(extraction=[4, 13]),
@@ -217,6 +238,12 @@ def test_a_tooth_named_by_words_is_left_unchecked_not_matched():
     # «오른쪽 송곳니» has no number to read: the change is listed as unchecked (못 잡는 것), never as checked
     r = request_check.check("오른쪽 송곳니는 움직이지 마.", C(), C(lock=[6]))
     assert r == {"status": "match", "reasons_ko": [], "unchecked": ["lock"]}
+
+
+@pytest.mark.parametrize("text", ["13번도 해줘", "13번도 빼줘"])
+def test_also_with_no_number_before_it_takes_nothing(text):
+    asked = request_check.read_request(text)
+    assert all(not asked[f]["add"] and not asked[f]["release"] for f in request_check.FIELDS_KO)
 
 
 @pytest.mark.parametrize("lock, status", [([13], "match"), ([25], "mismatch"), (None, None)])
@@ -241,19 +268,18 @@ def test_a_mismatch_blocks_approval_and_survives_a_restart(isolated):
     svc = PlanningService(s)
     pid = svc.stages(svc.target("moderate", "expansion_ipr", Constraints()), None)
     s.set_review(pid, REVIEW)
-    s.approve(pid)
-    mismatch = request_check.check(REVISION, Constraints(), Constraints())
-    assert mismatch["status"] == "mismatch"
-    s.set_request_check(pid, mismatch)
-    assert s.plans[pid]["approval"] is None                       # like a review, it resets approval
+    assert "request_check" not in s.plans[pid] and s.approve(pid)["approval"]   # no sentence: nothing to compare
+    wrong = turn_target([25], stage=True)
+    s.set_review(wrong, REVIEW)
     with client() as c:
-        r = c.post(f"/api/plans/{pid}/approval", json={"confirmed": True})
+        r = c.post(f"/api/plans/{wrong}/approval", json={"confirmed": True})
     assert r.status_code == 409 and "요청 문장과 계획의 조건이 다릅니다" in r.json()["detail"]
     assert "고정 치아에 요청한 13번이 없습니다" in r.json()["detail"]
-    with pytest.raises(ValueError, match="요청 문장과"):
-        store_module.Store().approve(pid)                         # the plan file read back after a restart
-    s.set_request_check(pid, request_check.check(REVISION, Constraints(), C(lock=[6])))
-    assert s.approve(pid)["approval"]["status"] == "approved"
+    with pytest.raises(ValueError, match="요청 문장과 계획의 조건이 다릅니다"):
+        store_module.Store().approve(wrong)                       # the plan file read back after a restart
+    right = turn_target([13], stage=True)
+    s.set_review(right, REVIEW)
+    assert s.approve(right)["approval"]["status"] == "approved"
 
 
 @pytest.mark.parametrize("lock, status, code", [([25], "mismatch", 409), ([13], "match", 200)])
@@ -280,3 +306,57 @@ def test_every_compared_candidate_is_checked_so_switching_to_it_cannot_skip_the_
     assert r.status_code == code, r.text
     if code == 409:
         assert r.json()["detail"].startswith("요청 문장과 계획의 조건이 다릅니다: 고정 치아에 요청한 13번이 없습니다")
+
+
+# ---- the check goes with the target, whatever path stages it (Codex re-check 2026-10-03) ---------------------------
+
+@pytest.mark.parametrize("lock, code", [([25], 409), ([13], 200)])
+def test_staging_the_turn_target_again_keeps_the_check(isolated, lock, code):
+    """(1) POST …/targets/{id}/stages on the turn's target, outside the turn: the same conditions staged again, review
+    «skipped», and the new plan carried no check, so approval let the mismatch through. The plan made from the target
+    is checked against the sentence of the turn that made the target. [13] is the same path applied right."""
+    tid = turn_target(lock)
+    with client() as c:
+        row = c.post(f"/api/cases/moderate/targets/{tid}/stages", json={}).json()
+        p = isolated.plans[row["plan_id"]]
+        assert p["review"]["status"] == "skipped" and not p["violations"]
+        r = c.post(f"/api/plans/{row['plan_id']}/approval", json={"confirmed": True})
+    assert r.status_code == code, r.text
+    if code == 409:
+        assert r.json()["detail"].startswith("요청 문장과 계획의 조건이 다릅니다: 고정 치아에 요청한 13번이 없습니다")
+
+
+@pytest.mark.parametrize("lock, status", [([25], "mismatch"), ([13], "match")])
+def test_a_hand_edit_of_the_turn_target_keeps_the_check(isolated, lock, status):
+    """직접 이동 makes a new target from the turn's (parent_target_id): it answers the same sentence."""
+    tid = turn_target(lock)
+    with client() as c:
+        view = c.get(f"/api/cases/moderate/targets/{tid}").json()
+        d = (np.asarray(view["stages"][0]["8"]) + 0.2 * np.asarray(view["frames"]["8"]["buccal"])).tolist()
+        new = c.post(f"/api/cases/moderate/targets/{tid}/manual", json={"teeth": {"8": {"d": d, "yaw": 0.0}}}).json()
+        assert new["info"]["parent_target_id"] == tid
+        row = c.post(f"/api/cases/moderate/targets/{new['target_id']}/stages", json={}).json()
+    assert isolated.plans[row["plan_id"]]["request_check"]["status"] == status
+
+
+@pytest.mark.parametrize("lock, status", [([25], "mismatch"), ([13], "match")])
+def test_a_stages_turn_on_a_target_turn_target_answers_the_target_turn_sentence(isolated, lock, status):
+    """The step flow: a target turn reads the sentence and makes the target, the next turn («단계로 나눠줘.») stages it.
+    That turn opens with the conditions already changed, so its own sentence alone finds nothing to compare."""
+    tid = turn_target(lock, step="target")
+    c = isolated.case_constraints["moderate"]
+    run = PlanRun("rc2", "moderate", None, c, step="stages")
+    run.text, run.opened, run.inherited_target_id = "단계로 나눠줘.", c, tid
+    plan = run_tools([("plan_stages", {"target_id": tid})], run)[0]
+    assert plan["request_check"]["status"] == status
+
+
+def test_approval_refuses_a_plan_of_a_sentence_without_its_check(isolated):
+    """fail-closed: a plan whose target answers a dentist's sentence but that carries no check (made by a path that
+    left it out, or lost it) is refused, not let through."""
+    pid = turn_target([13], stage=True)
+    isolated.set_review(pid, REVIEW)
+    assert isolated.plans[pid]["request_check"]["status"] == "match"
+    del isolated.plans[pid]["request_check"]
+    with pytest.raises(ValueError, match="요청 문장과 대조하지 않은 계획"):
+        isolated.approve(pid)

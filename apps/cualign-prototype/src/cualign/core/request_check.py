@@ -9,16 +9,26 @@ added or released, and the months of a time limit, and compares them with the ch
 Only numbers are read: upper-arch FDI 11..18 and 21..28, right before the field's words, or with «도» and no field words
 after it («기존 25번 고정에 13번도»), taking the field and action of the number before it in the same sentence (Codex
 review 2026-10-03: read only forwards, the plan's own sentence blocked the right plan and passed the one that left 13
-out). A tooth named by its name
+out). A verb after «도» is that number's own: «25번 고정하고 13번도 빼줘» releases 13, and a verb of no field («봐줘»)
+leaves it unread (Codex re-check 2026-10-03: taking the field before it read «빼줘» as a lock). A tooth named by its name
 («오른쪽 송곳니») is not read: a field the sentence names without numbers that the turn changed is listed as unchecked,
 never as a match.
+
+The check goes with what the turn makes, not with the tool that makes it: TURN holds the turn's sentence while its tools
+run, and the store keeps it on every target the turn makes and checks every plan made from such a target, whatever path
+stages it later (Store.put_target, put_plan, approve).
 """
 from __future__ import annotations
 
 import re
+from contextvars import ContextVar
 
 from .fdi import from_fdi, label
 from .limits import stage_cap_from_months
+
+# (sentence, the conditions the turn opened with) while an agent turn's tool runs (agent/register.step_gated); None
+# outside a /chat/stream turn (MCP, the API, the tests that call the store)
+TURN: ContextVar[tuple | None] = ContextVar("cualign_request", default=None)
 
 FIELDS_KO = {"lock": "고정 치아", "ipr_exclude": "IPR 제외 치아", "extraction": "발치 치아"}
 
@@ -41,6 +51,10 @@ WORDS = {"lock": re.compile(r"고정|움직이지|움직여도"), "ipr_exclude":
 MONTHS = re.compile(r"(?<!\d)(\d{1,2})\s*개월\s*(?:안|이내|내|까지|로)")
 ALSO = re.compile(r"^\s*(?:번|치아)\s*(?:치아\s*)?도")                # «13번도», «13번 치아도»
 SENTENCE_END = re.compile(r"[.?!\n]")
+CLAUSE_END = re.compile(r"[.?!\n,·]|\d")                               # what follows «도»: up to the next number
+NO_VERB = re.compile(r"\s*(?:요|해\s*(?:줘|주세요|줘요)?|부탁\S*)?\s*")   # «13번도», «13번도 해줘»: the one before
+AWAY = {"lock": ("release", re.compile(r"^\s*(?:빼|풀|해제)(?!\s*하?지)")),   # «13번도 빼줘» after a lock releases it;
+        "ipr_exclude": ("add", re.compile(r"^\s*(?:빼|제외)(?!\s*하?지)"))}   # «빼지 마» is not read
 
 
 def read_request(text: str) -> dict:
@@ -60,8 +74,18 @@ def read_request(text: str) -> dict:
         if (c and GAP.match(rest[:c.start()]) and IPR_THEN_TEETH.search(text[:m.start()])
                 and (best is None or c.start() < best[0])):
             best = (c.start(), "ipr_exclude", "add")
-        if best is None and last and ALSO.match(rest) and not SENTENCE_END.search(text[last[0]:m.start()]):
-            best = (None, last[1], last[2])
+        also = ALSO.match(rest)
+        if best is None and last and also and not SENTENCE_END.search(text[last[0]:m.start()]):
+            tail = CLAUSE_END.split(rest[also.end():], 1)[0]
+            cue = next(((f, a) for f, a, words in CUES if words.search(tail)), None)   # «13번도 꼭 고정»
+            away = AWAY.get(last[1])
+            if cue:
+                best = (None, *cue)
+            elif away and away[1].match(tail):
+                best = (None, last[1], away[0])
+            elif NO_VERB.fullmatch(tail):
+                best = (None, last[1], last[2])
+            # another verb (봐줘, 확인해줘, or 빼줘 after 발치) is no field's: the number stays unread
         if best is not None:
             out[best[1]][best[2]].add(tooth)
             last = (m.end(), best[1], best[2])
@@ -100,4 +124,13 @@ def check(text: str, before, after) -> dict:
         if after.stage_cap != cap:
             reasons.append(f"요청한 {asked['months']}개월(단계 상한 {cap}단계)과 저장된 단계 상한"
                            f"({f'{after.stage_cap}단계' if after.stage_cap else '없음'})이 다릅니다")
+    return {"status": "mismatch" if reasons else "match", "reasons_ko": reasons, "unchecked": unchecked}
+
+
+def check_all(asks, after) -> dict:
+    """check() for each (sentence, opened) in `asks` against the same plan conditions `after`: a plan made in one turn
+    from another turn's target answers both sentences. A mismatch in any is a mismatch."""
+    found = [check(text, opened, after) for text, opened in asks]
+    reasons = list(dict.fromkeys(r for f in found for r in f["reasons_ko"]))
+    unchecked = list(dict.fromkeys(u for f in found for u in f["unchecked"]))
     return {"status": "mismatch" if reasons else "match", "reasons_ko": reasons, "unchecked": unchecked}
