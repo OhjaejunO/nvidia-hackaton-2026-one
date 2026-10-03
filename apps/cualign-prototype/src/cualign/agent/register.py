@@ -156,6 +156,18 @@ def summary(pid):
     return {k: v for k, v in p.items() if k != "stages"}
 
 
+def check_request(run, pids):
+    """The turn's sentence against the change it made to the conditions (core/request_check), on every plan it makes:
+    a mismatch blocks approval. Not only the selected one — the screen's plan menu switches to another candidate of a
+    comparison without select_plan, and its review and approval are asked by hand (Codex review 2026-10-03)."""
+    if run is None or run.text is None or run.opened is None:
+        return                                    # MCP and tests have no sentence
+    for pid in pids:
+        c = STORE.plans[pid]["constraints"]
+        c = c if isinstance(c, Constraints) else Constraints.model_validate(c)
+        STORE.set_request_check(pid, request_check.check(run.text, run.opened, c))
+
+
 @register_function_group(config_type=CuAlignToolConfig)
 async def cualign(config: CuAlignToolConfig, _builder: Builder) -> AsyncGenerator[FunctionGroup, None]:
     group = FunctionGroup(config=config)
@@ -233,6 +245,7 @@ async def cualign(config: CuAlignToolConfig, _builder: Builder) -> AsyncGenerato
         pid = service.stages(inp.target_id, run.base_plan_id if run else None)
         if run:
             run.plan_ids.add(pid)
+        check_request(run, [pid])
         return summary(pid)
 
     async def _validate(inp: PlanIdInput) -> dict:
@@ -251,6 +264,7 @@ async def cualign(config: CuAlignToolConfig, _builder: Builder) -> AsyncGenerato
             run.plan_ids.update(ids)
             run.target_ids.update(STORE.plans[pid]["target_id"] for pid in ids)
             run.compared = True
+        check_request(run, ids)
         c = constraints_for(cid)   # plans carry the same constraints (golden set tool contract); the FDI line beside them
         return {"case_id": cid, "constraints": c.model_dump(mode="json"), "conditions_ko": c.describe_ko(),
                 "plans": [summary(pid) for pid in ids]}
@@ -264,12 +278,7 @@ async def cualign(config: CuAlignToolConfig, _builder: Builder) -> AsyncGenerato
         if run:
             if run.selected_plan_id and run.selected_plan_id != inp.plan_id:
                 raise ValueError("a final plan is already selected in this request")
-            run.selected_plan_id = inp.plan_id
-            if run.text is not None and run.opened is not None:
-                # the turn's sentence against the change it made to the conditions; a mismatch blocks approval
-                c = p["constraints"]
-                c = c if isinstance(c, Constraints) else Constraints.model_validate(c)
-                STORE.set_request_check(inp.plan_id, request_check.check(run.text, run.opened, c))
+            run.selected_plan_id = inp.plan_id     # it carries request_check from when the turn made it
         return {"type": "plan_selected", **summary(inp.plan_id)}
 
     async def _export_stl(inp: PlanIdInput) -> dict:

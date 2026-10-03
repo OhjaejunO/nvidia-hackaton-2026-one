@@ -294,7 +294,7 @@ class Store:
                 # fingerprint of every other plan, and of plan files written before it, stays what it was
                 **({"rule_run": dict(p["rule_run"])} if p.get("rule_run") else {}),
                 # the agent turn's sentence against the plan's conditions (core/request_check), the same way: only on
-                # plans an agent turn selected
+                # plans an agent turn made
                 **({"request_check": dict(p["request_check"])} if p.get("request_check") else {}),
                 "stages": [{str(i): np.round(v, 4).tolist() for i, v in st.items()} for st in p["stages"]],
                 # degrees about each crown's vertical axis through its centroid (pivot), per stage
@@ -341,7 +341,7 @@ class Store:
             raise ValueError("의사가 현재 계획을 승인한 뒤 내보낼 수 있습니다.")
 
     def set_request_check(self, pid: str, result: dict) -> dict:
-        """Record core/request_check's verdict on the plan an agent turn selected. Like a review, it resets approval."""
+        """Record core/request_check's verdict on a plan an agent turn made. Like a review, it resets approval."""
         record = self._record(pid)
         record["request_check"] = dict(result)
         record["approval"] = None

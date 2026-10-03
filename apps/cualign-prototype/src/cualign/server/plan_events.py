@@ -219,7 +219,7 @@ class PlanEventsASGI:
             ctx = ChatContext.model_validate({**raw, "step": step} if step else raw) if raw is not None                 else ChatContext(case_id=STORE.active_case or "moderate", **({"step": step} if step else {}))
             preload = getattr(getattr(scope.get("app"), "state", None), "cualign_preload", None)  # set by worker.add_routes
             run, system = open_run(ctx, preload=preload)
-            run.text = user_text(data.get("messages"))   # select_plan checks it against the conditions (core/request_check)
+            run.text = user_text(data.get("messages"))   # every plan the turn makes is checked against it (core/request_check)
             if sent is not None:
                 text = user_text(data.get("messages"))
                 STORE.turn_steps[run.case_id] = {"screen": recorded.replay_step(text, sent, as_sent=True),

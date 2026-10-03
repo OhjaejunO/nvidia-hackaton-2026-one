@@ -6,7 +6,10 @@ none reads the dentist's sentence. This reads the tooth numbers the sentence nam
 added or released, and the months of a time limit, and compares them with the change the turn made to the conditions
 (the conditions the turn opened with -> the plan's). A disagreement blocks approval (Store.approve).
 
-Only numbers are read: upper-arch FDI 11..18 and 21..28, right before the field's words. A tooth named by its name
+Only numbers are read: upper-arch FDI 11..18 and 21..28, right before the field's words, or with «도» and no field words
+after it («기존 25번 고정에 13번도»), taking the field and action of the number before it in the same sentence (Codex
+review 2026-10-03: read only forwards, the plan's own sentence blocked the right plan and passed the one that left 13
+out). A tooth named by its name
 («오른쪽 송곳니») is not read: a field the sentence names without numbers that the turn changed is listed as unchecked,
 never as a match.
 """
@@ -36,6 +39,8 @@ CLEAR = {"lock": re.compile(r"고정\s*(?:치아\s*)?(?:을|은|는)?\s*(?:모�
 WORDS = {"lock": re.compile(r"고정|움직이지|움직여도"), "ipr_exclude": re.compile(r"IPR|ipr"),
          "extraction": re.compile(r"발치")}
 MONTHS = re.compile(r"(?<!\d)(\d{1,2})\s*개월\s*(?:안|이내|내|까지|로)")
+ALSO = re.compile(r"^\s*(?:번|치아)\s*(?:치아\s*)?도")                # «13번도», «13번 치아도»
+SENTENCE_END = re.compile(r"[.?!\n]")
 
 
 def read_request(text: str) -> dict:
@@ -43,6 +48,7 @@ def read_request(text: str) -> dict:
     plus "months" (the time limit, None when not stated). Numbers are FDI as the dentist speaks them."""
     out = {f: {"add": set(), "release": set(), "clear": bool(CLEAR[f].search(text)) if f in CLEAR else False}
            for f in FIELDS_KO}
+    last = None                                   # (end, field, action) of the number read before this one
     for m in TOOTH.finditer(text):
         tooth, rest = from_fdi(int(m.group(1))), text[m.end():]
         best = None
@@ -54,8 +60,11 @@ def read_request(text: str) -> dict:
         if (c and GAP.match(rest[:c.start()]) and IPR_THEN_TEETH.search(text[:m.start()])
                 and (best is None or c.start() < best[0])):
             best = (c.start(), "ipr_exclude", "add")
+        if best is None and last and ALSO.match(rest) and not SENTENCE_END.search(text[last[0]:m.start()]):
+            best = (None, last[1], last[2])
         if best is not None:
             out[best[1]][best[2]].add(tooth)
+            last = (m.end(), best[1], best[2])
     months = MONTHS.search(text)
     out["months"] = int(months.group(1)) if months else None
     return out
