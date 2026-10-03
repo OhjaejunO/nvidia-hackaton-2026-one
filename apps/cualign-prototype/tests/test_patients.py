@@ -177,7 +177,7 @@ def test_renumbering_makes_earlier_plans_stale(client):
     service = PlanningService(store.STORE)
     # the plan's own strategy: the prescription refuses any other (PlanningService.target)
     tid = service.target("P0001-S1", target["info"]["strategy"], store.STORE.constraints_for("P0001-S1"))
-    assert client.post(f"/api/plans/{plan_id}/approval", json={"confirmed": True}).status_code == 200
+    assert client.post(f"/api/plans/{plan_id}/approval", json={"confirmed": True, "lock_fdi": api.STORE.lock_fdi(plan_id)}).status_code == 200
     assert client.get(f"/api/plans/{plan_id}/stl.zip").status_code == 200
 
     check = client.post("/api/patients/P0001/scans/S1/mirror").json()
@@ -185,7 +185,7 @@ def test_renumbering_makes_earlier_plans_stale(client):
     plan = client.get(f"/api/plans/{plan_id}").json()
     assert plan["input_stale"] and plan["approval"] is None
     assert client.get(f"/api/plans/{plan_id}/stl.zip").status_code == 409
-    assert client.post(f"/api/plans/{plan_id}/approval", json={"confirmed": True}).status_code == 409
+    assert client.post(f"/api/plans/{plan_id}/approval", json={"confirmed": True, "lock_fdi": api.STORE.lock_fdi(plan_id)}).status_code == 409
     with pytest.raises(ValueError):
         service.stages(tid)                         # a target made before the renumbering
     with pytest.raises(ValueError):

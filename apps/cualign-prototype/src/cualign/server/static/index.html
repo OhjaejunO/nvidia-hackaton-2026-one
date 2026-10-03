@@ -231,6 +231,9 @@
                 <p id="exportWhat" class="export-what"></p>
                 <p id="exportAsk">의사 승인으로 확정합니다. 조건·3D·검토 결과를 확인하셨나요?</p>
                 <p id="exportSkip" class="export-skip" hidden>검토 에이전트를 거치지 않은 계획입니다.</p>
+                <p id="exportCheck" class="export-skip" hidden></p>
+                <!-- 승인은 고정 치아(FDI)를 의사가 직접 확인해야 열린다: 서버가 확인한 목록을 승인과 함께 남긴다 -->
+                <label id="exportLockRow" class="export-lock"><input id="exportLockOk" type="checkbox" /><span id="exportLock"></span></label>
                 <div>
                   <button id="exportGo" class="btn primary small" type="button">확정하고 내려받기</button>
                   <button id="exportCancel" class="btn ghost small" type="button">취소</button>

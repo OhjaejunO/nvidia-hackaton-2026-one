@@ -19,7 +19,7 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
-from cualign.core.fdi import from_fdi
+from cualign.core.fdi import from_fdi, to_fdi
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "out" / "nim-live"
@@ -106,6 +106,12 @@ async def converse(client, url, text, ctx, log, messages=None, step=None):
     return events, answer, elapsed
 
 
+async def lock_fdi(client, url, plan_id):
+    """The plan's locked teeth as the screen's approval sends them (FDI): the dentist ticks them (Store.approve)."""
+    d = (await client.get(url + f"/api/plans/{plan_id}", timeout=30)).json()
+    return sorted(to_fdi(t) for t in d["constraints"]["lock"])
+
+
 def pick(events, name):
     return next((o for n, o in events if n == name), None)
 
@@ -168,7 +174,8 @@ async def main():
             # --- approval gate --------------------------------------------------
             before = await client.get(url + f"/api/plans/{plan_id}/stl.zip", timeout=60)
             verdict["export_before_approval_status"] = before.status_code
-            ap = await client.post(url + f"/api/plans/{plan_id}/approval", json={"confirmed": True}, timeout=30)
+            ap = await client.post(url + f"/api/plans/{plan_id}/approval",
+                                   json={"confirmed": True, "lock_fdi": await lock_fdi(client, url, plan_id)}, timeout=30)
             verdict["approval_status"] = ap.status_code
             verdict["approval_detail"] = ap.json().get("detail") if ap.status_code != 200 else "approved"
             if ap.status_code == 200:

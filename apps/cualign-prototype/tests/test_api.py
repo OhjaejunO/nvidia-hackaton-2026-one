@@ -29,7 +29,7 @@ def test_artifact_flow(tmp_path, monkeypatch):
         detail = client.get(f"/api/plans/{pid}")
         assert detail.status_code == 200
         assert client.get(f"/api/plans/{pid}/stl.zip").status_code == 409
-        assert client.post(f"/api/plans/{pid}/approval", json={"confirmed": True}).status_code == 200
+        assert client.post(f"/api/plans/{pid}/approval", json={"confirmed": True, "lock_fdi": api.STORE.lock_fdi(pid)}).status_code == 200
         output = client.get(f"/api/plans/{pid}/stl.zip")
         assert output.status_code == 200
         with ZipFile(BytesIO(output.content)) as archive:
@@ -110,7 +110,7 @@ def test_stl_zip_builds_off_the_event_loop(tmp_path, monkeypatch):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             result = (await client.post("/api/plan", json={"case_id": "moderate"})).json()
             pid = (result["chosen"] or result["best_failed"])["plan_id"]
-            assert (await client.post(f"/api/plans/{pid}/approval", json={"confirmed": True})).status_code == 200
+            assert (await client.post(f"/api/plans/{pid}/approval", json={"confirmed": True, "lock_fdi": api.STORE.lock_fdi(pid)})).status_code == 200
             download = asyncio.create_task(client.get(f"/api/plans/{pid}/stl.zip"))
             assert await asyncio.to_thread(started.wait, 60)
             other = await asyncio.wait_for(client.get(f"/api/plans/{pid}"), 30)   # generous: a parallel --slow run loads the machine

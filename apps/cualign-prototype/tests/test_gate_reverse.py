@@ -54,7 +54,7 @@ def test_export_tool_allows_after_approval(isolated, tmp_path):
                 with pytest.raises(ValueError):
                     await export.ainvoke({"plan_id": pid})
                 s.set_review(pid, PASSED)  # clears approval, so approve after it
-                s.approve(pid)
+                s.approve(pid, s.lock_fdi(pid))
                 return await export.ainvoke({"plan_id": pid})
             finally:
                 CURRENT_RUN.reset(token)
@@ -71,7 +71,7 @@ def test_stl_zip_not_stale(isolated, tmp_path):
     with client() as c:
         plan = c.post("/api/plan", json={"case_id": "moderate", "allow_extraction": False}).json()["chosen"]
         pid = plan["plan_id"]
-        assert c.post(f"/api/plans/{pid}/approval", json={"confirmed": True}).status_code == 200
+        assert c.post(f"/api/plans/{pid}/approval", json={"confirmed": True, "lock_fdi": api.STORE.lock_fdi(pid)}).status_code == 200
         stale = tmp_path / "stl" / f"{pid}.zip"
         stale.parent.mkdir(parents=True, exist_ok=True)
         stale.write_bytes(b"STALE-MARKER")
@@ -101,6 +101,6 @@ def test_unreviewed_plan_not_approvable(isolated):
     pid = make_plan(s)
     assert s.plans[pid]["review"]["status"] == "not_requested"
     with client() as c:
-        assert c.post(f"/api/plans/{pid}/approval", json={"confirmed": True}).status_code == 409
+        assert c.post(f"/api/plans/{pid}/approval", json={"confirmed": True, "lock_fdi": api.STORE.lock_fdi(pid)}).status_code == 409
         s.set_review(pid, PASSED)
-        assert c.post(f"/api/plans/{pid}/approval", json={"confirmed": True}).status_code == 200
+        assert c.post(f"/api/plans/{pid}/approval", json={"confirmed": True, "lock_fdi": api.STORE.lock_fdi(pid)}).status_code == 200

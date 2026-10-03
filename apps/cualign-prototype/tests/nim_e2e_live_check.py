@@ -32,7 +32,7 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "out" / "nim-live"
 sys.path.insert(0, str(ROOT / "tests"))
-from nim_live_check import converse, free_port, pick, tool_steps, wait_ready  # noqa: E402
+from nim_live_check import converse, free_port, lock_fdi, pick, tool_steps, wait_ready  # noqa: E402
 
 HANGUL = re.compile(r"[가-힣]")
 LATIN = re.compile(r"[A-Za-z]")
@@ -183,7 +183,8 @@ async def main(case_id):
             steps["7_followup"] = {"status": r.status_code, "card": card, "pass": r.status_code == 200}
             # 8. 내보내기 — only a passing, reviewed plan can be approved; a failed plan is refused with the reason (409)
             before = await client.get(url + f"/api/plans/{selected}/stl.zip", timeout=60)
-            appr = await client.post(url + f"/api/plans/{selected}/approval", json={"confirmed": True}, timeout=60)
+            appr = await client.post(url + f"/api/plans/{selected}/approval",
+                                     json={"confirmed": True, "lock_fdi": await lock_fdi(client, url, selected)}, timeout=60)
             step = {"plan": selected, "plan_passed": d["passed"], "before_approval": before.status_code, "approval": appr.status_code}
             if d["passed"]:
                 after = await client.get(url + f"/api/plans/{selected}/stl.zip", timeout=300)

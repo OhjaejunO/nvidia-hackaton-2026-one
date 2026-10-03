@@ -111,7 +111,7 @@ def test_approval_export_revoke_revision_and_file_contents(isolated):
         pid = result["chosen"]["plan_id"]
         assert client.get(f"/api/plans/{pid}/stl.zip").status_code == 409
         assert client.post(f"/api/plans/{pid}/approval", json={}).status_code == 400
-        assert client.post(f"/api/plans/{pid}/approval", json={"confirmed": True}).status_code == 200
+        assert client.post(f"/api/plans/{pid}/approval", json={"confirmed": True, "lock_fdi": api.STORE.lock_fdi(pid)}).status_code == 200
         output = client.get(f"/api/plans/{pid}/stl.zip")
         assert output.status_code == 200
         p = s.plans[pid]
@@ -136,7 +136,7 @@ def test_approval_invalidated_by_snapshot_change(isolated):
     s = isolated
     pid = make_plan(s)
     s.set_review(pid, {"status": "passed", "attempts": 1, "message": "memo", "error": None})
-    s.approve(pid)
+    s.approve(pid, s.lock_fdi(pid))
     s.plans[pid]["stages"][-1][13][0] += 0.000001
     with pytest.raises(ValueError):
         s.require_approved(pid)
@@ -146,14 +146,14 @@ def test_failed_review_or_rules_cannot_approve(isolated):
     s = isolated
     pid = make_plan(s)
     with pytest.raises(ValueError):
-        s.approve(pid)
+        s.approve(pid, s.lock_fdi(pid))
     s.set_review(pid, {"status": "failed", "attempts": 2, "message": "failed", "error": "empty_response"})
     with pytest.raises(ValueError):
-        s.approve(pid)
+        s.approve(pid, s.lock_fdi(pid))
     s.set_review(pid, {"status": "passed", "attempts": 1, "message": "memo", "error": None})
     s.plans[pid]["violations"] = [{"type": "space_deficit"}]
     with pytest.raises(ValueError):
-        s.approve(pid)
+        s.approve(pid, s.lock_fdi(pid))
 
 
 def test_nat_tools_keep_constraints_select_earlier_candidate_and_deny_export(isolated):

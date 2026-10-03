@@ -76,6 +76,6 @@ def test_patient_scan_moves_through_every_status(client):
     assert row["status"] == "awaiting_approval" and row["status_ko"] == "승인 대기"
     assert row["plan"]["plan_id"] == plan_id and row["plan"]["passed"] is True and row["plan"]["violations"] == 0
 
-    assert client.post(f"/api/plans/{plan_id}/approval", json={"confirmed": True}).status_code == 200
+    assert client.post(f"/api/plans/{plan_id}/approval", json={"confirmed": True, "lock_fdi": api.STORE.lock_fdi(plan_id)}).status_code == 200
     row = _row(client.get("/api/case-list").json()["cases"], case_id)
     assert row["status"] == "approved" and row["status_ko"] == "승인됨" and row["plan"]["plan_id"] == plan_id

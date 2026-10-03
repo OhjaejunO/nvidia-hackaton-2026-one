@@ -10,12 +10,14 @@ import hashlib
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote, unquote
 
 import numpy as np
 
 from . import patients, request_check, samples
 from .case import Case
 from .constraints import Constraints
+from .fdi import to_fdi
 from .synth import PRESETS
 
 OUT_DIR = Path(os.environ.get("CUALIGN_OUT", "out"))
@@ -83,7 +85,12 @@ class Store:
         self.active_case: str | None = None
         self.targets: dict[str, dict] = {}
         self.plans: dict[str, dict] = {}
+        # case_id -> {"seg": n, "entries": [request_check.ask/edit + "seg"]}: what the dentist asked on the case, in
+        # order, every turn (setup too) and every hand edit; 처음부터 opens a new segment (restart_case). Every plan is
+        # compared with the entries of its segment (check_request), at approval too. Kept on disk like the plans.
+        self.requests: dict[str, dict] = {}
         self._load_persisted_plans()
+        self._load_persisted_requests()
 
     # ------------------------------------------------------------------ cases
     def available_cases(self) -> list[dict]:
@@ -216,15 +223,20 @@ class Store:
     def restart_case(self, case_id: str) -> None:
         """「처음부터」: forget how far the step flow went and the case-level conditions (back to Constraints(), not the
         sample's prescription — the prescription chip puts it back). Targets and plans stay: plan ids, approvals and
-        exports keep their records, and the screen folds the plans as 지난 계획."""
+        exports keep their records, and the screen folds the plans as 지난 계획. What was asked so far stays with those
+        plans: a new segment of requests starts, and each plan keeps being compared with its own (check_request)."""
         self.flow.pop(case_id, None)
         self.case_constraints[case_id] = Constraints()
+        self.requests.setdefault(case_id, {"seg": 0, "entries": []})["seg"] += 1
+        self._persist_requests(case_id)
 
     def forget_case(self, case_id: str) -> list[str]:
         """Drop everything derived from a deleted patient scan: case, conditions, targets, plans and their files."""
         self.cases.pop(case_id, None)
         self.case_constraints.pop(case_id, None)
         self.flow.pop(case_id, None)
+        self.requests.pop(case_id, None)
+        self._requests_file(case_id).unlink(missing_ok=True)
         if self.active_case == case_id:
             self.active_case = None
         for tid in [t for t, v in self.targets.items() if v["case_id"] == case_id]:
@@ -251,20 +263,65 @@ class Store:
         self.targets[tid] = {"case_id": case_id, "target": target, "info": info,
                             "constraints": constraints or self.constraints_for(case_id),
                             "input_revision": st["revision"] if st else None}
-        # the dentist's sentences this target answers (core/request_check): the agent turn's that makes it and those of
-        # the target it was edited from (직접 이동, parent_target_id); every plan staged from it is checked (put_plan)
-        asks = self._asks(self.targets.get(info.get("parent_target_id") or "", {}).get("asks", ()))
-        if asks:
-            self.targets[tid]["asks"] = asks
         return tid
 
-    @staticmethod
-    def _asks(inherited) -> list:
-        asks = list(inherited)
-        turn = request_check.TURN.get()
-        if turn is not None and turn not in asks:
-            asks.append(turn)
-        return asks
+    # ------------------------------------------------------------------ what the dentist asked (core/request_check)
+    def add_request(self, case_id: str, text: str, opened: Constraints) -> None:
+        """A turn's sentence, as the turn opens (plan_events): setup turns too, whatever the turn then does."""
+        self._log(case_id, request_check.ask(text, opened))
+
+    def add_edit(self, case_id: str, before: Constraints, after: Constraints) -> None:
+        """Conditions the dentist changed by hand on the screen (the form sent with a turn or 다시 계산, a setup edit):
+        they set the fields they change. Nothing is kept when none of the checked fields or the stage cap changed."""
+        if any(getattr(before, f) != getattr(after, f) for f in (*request_check.FIELDS_KO, "stage_cap")):
+            self._log(case_id, request_check.edit(before, after))
+
+    def _log(self, case_id: str, entry: dict) -> None:
+        r = self.requests.setdefault(case_id, {"seg": 0, "entries": []})
+        r["entries"].append({**entry, "seg": r["seg"]})
+        self._persist_requests(case_id)
+
+    def check_request(self, pid: str) -> dict | None:
+        """The plan against everything asked on its case in its segment, as of now (request_check.check_case); None
+        when nothing was asked. A request file that could not be read is never a match."""
+        p = self._record(pid)
+        r = self.requests.get(p["case_id"])
+        if r is not None and r.get("unreadable"):
+            return {"status": "needs_check", "reasons_ko": [],
+                    "unread_ko": [f"요청 기록을 읽지 못했습니다({r['unreadable']})"], "unchecked": []}
+        seg = p.get("request_seg", 0)
+        return request_check.check_case([e for e in (r or {}).get("entries", ()) if e["seg"] == seg], p["constraints"])
+
+    def lock_fdi(self, pid: str) -> list[int]:
+        """The plan's locked teeth as the dentist reads them (FDI), sorted: what the approval confirms."""
+        return sorted(to_fdi(t) for t in self._record(pid)["constraints"].lock)
+
+    def _requests_file(self, case_id: str) -> Path:
+        return OUT_DIR / "requests" / (quote(case_id, safe="") + ".json")
+
+    def _persist_requests(self, case_id: str) -> None:
+        r = self.requests[case_id]
+        rows = [{k: v.model_dump(mode="json") if isinstance(v, Constraints) else v for k, v in e.items()}
+                for e in r["entries"]]
+        path = self._requests_file(case_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"case_id": case_id, "seg": r["seg"], "entries": rows}, ensure_ascii=False),
+                        encoding="utf-8")
+
+    def _load_persisted_requests(self) -> None:
+        folder = OUT_DIR / "requests"
+        if not folder.is_dir():
+            return
+        for path in folder.glob("*.json"):
+            case_id = unquote(path.stem)
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                entries = [{k: Constraints.model_validate(v) if k in ("opened", "before", "after") else v
+                            for k, v in e.items()} for e in data["entries"]]
+                self.requests[case_id] = {"seg": int(data["seg"]), "entries": entries}
+            except (OSError, ValueError, KeyError, TypeError) as e:
+                # fail-closed: a case whose requests cannot be read has no plan that matches them (check_request)
+                self.requests[case_id] = {"seg": 0, "entries": [], "unreadable": f"{path.name}: {e}"}
 
     def put_plan(self, case_id: str, target_id: str | None, stages: list[dict], info: dict,
                  violations: list[dict], stage_cap: int | None, strategy: str,
@@ -278,11 +335,13 @@ class Store:
             "review": {"status": "not_requested", "attempts": 0, "message": "", "error": None},
             "approval": None,
             "input_revision": self.targets.get(target_id or "", {}).get("input_revision")}
-        # checked here, where every plan is made, not in the tools that make them: a later path that stages the same
-        # target (…/targets/{id}/stages) made a plan the check never saw (Codex re-check 2026-10-03)
-        asks = self._asks(self.targets.get(target_id or "", {}).get("asks", ()))
-        if asks:
-            self.plans[pid]["request_check"] = request_check.check_all(asks, c)
+        # checked here, where every plan is made, against everything asked on the case so far (check_request); the
+        # approval checks again against what was asked by then
+        seg = self.requests.get(case_id, {}).get("seg", 0)
+        if seg:
+            self.plans[pid]["request_seg"] = seg
+        if (check := self.check_request(pid)) is not None:
+            self.plans[pid]["request_check"] = check
         self._persist(pid)
         return pid
 
@@ -311,9 +370,10 @@ class Store:
                 # a rule plan's run (the strategies one POST /api/plan tried): only on those plans, so the approval
                 # fingerprint of every other plan, and of plan files written before it, stays what it was
                 **({"rule_run": dict(p["rule_run"])} if p.get("rule_run") else {}),
-                # the dentist's sentence against the plan's conditions (core/request_check), the same way: only on
-                # plans made from a target a sentence asked for (put_plan)
+                # what the dentist asked on the case against the plan's conditions (core/request_check), the same way:
+                # only on plans of a case where something was asked, and the segment only after a 처음부터
                 **({"request_check": dict(p["request_check"])} if p.get("request_check") else {}),
+                **({"request_seg": p["request_seg"]} if p.get("request_seg") else {}),
                 "stages": [{str(i): np.round(v, 4).tolist() for i, v in st.items()} for st in p["stages"]],
                 # degrees about each crown's vertical axis through its centroid (pivot), per stage
                 "rotations": [{str(i): round(float(y), 3) for i, y in getattr(st, "yaw", {}).items()} for st in p["stages"]],
@@ -331,22 +391,37 @@ class Store:
         data["stages"] = [{str(i): np.asarray(v).tolist() for i, v in st.items()} for st in self.plans[pid]["stages"]]
         return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
-    def approve(self, pid: str) -> dict:
+    def approve(self, pid: str, lock_fdi: list[int] | None = None) -> dict:
+        """Approval opens only on a match with everything asked on the case by now, and only with the locked teeth the
+        dentist confirmed on the screen (`lock_fdi`, FDI): the server records them with the approval."""
         p = self._record(pid)
         self.require_current_input(p["case_id"], p.get("input_revision"))
         if p["violations"]:
             raise ValueError("규칙 위반 계획은 승인할 수 없습니다.")
         if p["review"]["status"] not in ("passed", "skipped"):
             raise ValueError("검토가 완료되지 않았습니다. 검토 실패/미실행 계획은 승인할 수 없습니다.")
-        check = p.get("request_check")
-        if check is None and self.targets.get(p.get("target_id") or "", {}).get("asks"):
-            # fail-closed: a plan of a target a sentence asked for came by a path that left the check out
-            raise ValueError("요청 문장과 대조하지 않은 계획은 승인할 수 없습니다. 다시 계획한 뒤 승인하세요.")
-        if (check or {}).get("status") == "mismatch":
-            raise ValueError("요청 문장과 계획의 조건이 다릅니다: " + "; ".join(check.get("reasons_ko") or []) +
+        check = self.check_request(pid)
+        if check is None and p.get("request_check"):
+            # fail-closed: the plan was checked once, and what it was checked against is gone
+            raise ValueError("이 계획을 대조한 요청 기록을 찾지 못했습니다. 다시 계획한 뒤 승인하세요.")
+        if check is not None and check != p.get("request_check"):
+            p["request_check"] = check          # what the screen shows is what refused it
+            self._persist(pid)
+        if check is not None and check["status"] == "mismatch":
+            raise ValueError("요청 문장과 계획의 조건이 다릅니다: " + "; ".join(check["reasons_ko"]) +
                              ". 조건을 고쳐 다시 계획한 뒤 승인하세요.")
+        if check is not None and check["status"] != "match":
+            raise ValueError("요청 문장에 읽지 못한 부분이 있어 확인이 필요합니다: " +
+                             ", ".join(check["unread_ko"] + [request_check.FIELDS_KO[f] for f in check["unchecked"]]) +
+                             ". 번호마다 동작을 붙여 다시 말하거나(예: 「13번 고정해줘」) 조건 탭에서 고친 뒤 다시 계획하세요.")
+        locked = self.lock_fdi(pid)
+        if lock_fdi is None:
+            raise ValueError("고정 치아 목록(FDI)을 화면에서 확인한 뒤 승인하세요.")
+        if sorted(lock_fdi) != locked:
+            raise ValueError(f"확인한 고정 치아({', '.join(map(str, sorted(lock_fdi))) or '없음'})와 계획의 고정 치아"
+                             f"({', '.join(map(str, locked)) or '없음'})가 다릅니다. 다시 확인하세요.")
         p["approval"] = {"status": "approved", "approved_at": datetime.now(timezone.utc).isoformat(),
-                         "fingerprint": self.fingerprint(pid)}
+                         "fingerprint": self.fingerprint(pid), "confirmed_lock_fdi": locked}
         self._persist(pid)
         return self.plan_json(pid)
 

@@ -13,7 +13,6 @@ class PlanRun:
     base_plan_id: str | None
     constraints: Constraints
     step: str | None = None  # setup | target | stages: how far this turn goes (agent/steps.py); None = stages
-    text: str | None = None  # the turn's sentence (plan_events.user_text); None outside /chat/stream: no request check
     opened: Constraints | None = None  # the conditions the turn opened with (UI form applied), before set_constraints
     last_target_id: str | None = None  # the target propose_target made last (step_done target)
     inherited_target_id: str | None = None  # the target a previous target turn made (Store.flow): plan_stages may take it

@@ -51,7 +51,7 @@ def test_approval_starts_the_build_and_the_download_serves_the_cache(monkeypatch
     assert client.get(f"/api/plans/{pid}/export-status").json() == {"building": False, "done": 0, "total": n, "ready": False}
     assert client.get(f"/api/plans/{pid}/stl.zip").status_code == 409     # not approved: nothing is built either
     assert export_jobs.JOBS == {}
-    assert client.post(f"/api/plans/{pid}/approval", json={"confirmed": True}).status_code == 200
+    assert client.post(f"/api/plans/{pid}/approval", json={"confirmed": True, "lock_fdi": api.STORE.lock_fdi(pid)}).status_code == 200
     assert pid in export_jobs.JOBS                                          # the build started with the approval
     st = _wait_ready(client, pid)
     assert st == {"building": False, "done": n, "total": n, "ready": True, "stl": n * 14}   # no gingiva: no print models
@@ -65,14 +65,14 @@ def test_approval_starts_the_build_and_the_download_serves_the_cache(monkeypatch
     # revoked and approved again: the same snapshot, the same fingerprint, the same cache
     client.delete(f"/api/plans/{pid}/approval")
     assert client.get(f"/api/plans/{pid}/stl.zip").status_code == 409
-    client.post(f"/api/plans/{pid}/approval", json={"confirmed": True})
+    client.post(f"/api/plans/{pid}/approval", json={"confirmed": True, "lock_fdi": api.STORE.lock_fdi(pid)})
     assert export_jobs.JOBS[pid] is job and client.get(f"/api/plans/{pid}/stl.zip").status_code == 200
 
 
 def test_download_waits_for_a_running_build_and_a_lost_file_is_rebuilt(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     pid = _passing_plan(client, "moderate")
-    client.post(f"/api/plans/{pid}/approval", json={"confirmed": True})
+    client.post(f"/api/plans/{pid}/approval", json={"confirmed": True, "lock_fdi": api.STORE.lock_fdi(pid)})
     r = client.get(f"/api/plans/{pid}/stl.zip")                              # right after approval: waits for the build
     assert r.status_code == 200 and export_jobs.JOBS[pid].ready
     job = export_jobs.JOBS[pid]

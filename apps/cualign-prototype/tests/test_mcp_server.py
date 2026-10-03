@@ -108,7 +108,7 @@ def test_approve_never_approves_and_export_waits_for_the_dentist(served):
         approve = result(await ses.call_tool("cualign_approve_plan", {"plan_id": pid}))
         export_before = result(await ses.call_tool("cualign_export_stl", {"plan_id": pid}))
         if plan["passed"]:
-            s.approve(pid)   # the dentist, in the UI
+            s.approve(pid, s.lock_fdi(pid))   # the dentist, in the UI
         export_after = result(await ses.call_tool("cualign_export_stl", {"plan_id": pid}))
         return plan, approve, export_before, export_after
 

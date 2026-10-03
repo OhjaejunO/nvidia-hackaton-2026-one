@@ -2,7 +2,7 @@
 import { $, capOfMonths, monthsOfCap, state } from "./state.js";
 import { canvas, setView } from "./viewer.js";
 import { onPointerMove } from "./pick.js";
-import { approveCurrent, reviewCurrent, updateActions } from "./conditions.js";
+import { approveCurrent, lockFdi, reviewCurrent, updateActions } from "./conditions.js";
 import { planNo } from "./plans.js";
 import { addMsg } from "./chat.js";
 import { showPop } from "./panes.js";
@@ -18,6 +18,16 @@ function openExportPop() {
   $("exportAsk").textContent = again ? "의사 승인으로 확정된 계획입니다. 같은 zip 을 다시 받습니다." : "의사 승인으로 확정합니다. 조건·3D·검토 결과를 확인하셨나요?";
   $("exportGo").textContent = again ? "다시 내려받기" : "확정하고 내려받기";
   if (again) $("exportSkip").hidden = true;
+  // approval asks the dentist to tick the locked teeth (FDI) the server checks and records; what was asked on the
+  // case and does not match, or was not read, is said here (the server refuses it either way)
+  const lock = lockFdi(p), chk = p.request_check;
+  $("exportLock").textContent = `고정 치아 ${lock.length ? lock.join(", ") + "번" : "없음"} — 확인했습니다`;
+  $("exportLockRow").hidden = again;
+  $("exportLockOk").checked = false;
+  $("exportGo").disabled = !again;
+  $("exportCheck").hidden = again || !chk || chk.status === "match";
+  $("exportCheck").textContent = chk?.status === "mismatch" ? "요청과 다릅니다: " + chk.reasons_ko.join("; ")
+    : chk?.status === "needs_check" ? "확인 필요 — 읽지 못한 요청: " + chk.unread_ko.join(", ") : "";
   state.exportPopFor = exportPopKey();
   showPop(pop, true);
   const r = railExportBtn().getBoundingClientRect(), mid = r.top + r.height / 2;
@@ -46,6 +56,7 @@ window.addEventListener("pointerdown", (e) => {
 window.addEventListener("pointerup", (e) => { if (exportSwallowUp) { exportSwallowUp = false; e.stopImmediatePropagation(); } }, true);
 window.addEventListener("keydown", (e) => { if (state.exportPopFor && e.key === "Escape") closeExportPop(); }, true);
 $("exportCancel").addEventListener("click", closeExportPop);
+$("exportLockOk").addEventListener("change", () => { $("exportGo").disabled = !$("exportLockOk").checked; });
 $("exportGo").addEventListener("click", async () => {
   closeExportPop();
   if (!state.plan?.approval) await approveCurrent();

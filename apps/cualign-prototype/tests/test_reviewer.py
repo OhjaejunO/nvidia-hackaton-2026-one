@@ -39,7 +39,7 @@ def test_review_budget_and_cached_failure(tmp_path, monkeypatch, failure, error)
             assert fake.calls == context.review_attempts == 2
             assert first["status"] == "failed" and first["error"] == error
             with pytest.raises(ValueError):
-                s.approve(pid)
+                s.approve(pid, s.lock_fdi(pid))
         finally:
             CURRENT_RUN.reset(token)
     asyncio.run(run())
@@ -119,7 +119,7 @@ def test_manual_review_recovers_unreviewed_and_failed_plans(tmp_path, monkeypatc
         finally:
             CURRENT_RUN.reset(token)
         assert result["status"] == "passed" and again.calls == 1
-        s.approve(failed)
+        s.approve(failed, s.lock_fdi(failed))
         # Finished reviews are not run again.
         after = Reply("다른 메모")
         assert (await review_plan(failed, after, store=s, manual=True))["message"] == "검토 메모 초안"

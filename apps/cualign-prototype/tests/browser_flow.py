@@ -506,6 +506,9 @@ async def main():
             await page.evaluate("""() => { window.__exportTexts = []; const s = document.querySelector('#stlLink span');
                 new MutationObserver(() => window.__exportTexts.push(s.textContent)).observe(s, { childList: true, characterData: true, subtree: true }); }""")
             t0 = time.monotonic()
+            # approval asks the dentist to tick the locked teeth (FDI) first: the button waits for it
+            assert await page.locator("#exportGo").is_disabled()
+            await page.locator("#exportLockOk").check()
             async with page.expect_download(timeout=180000) as download:      # a real scan's zip takes a while (#119; 000097 with the filled gum)
                 await page.locator("#exportGo").click()
             print(f"STL download started after {time.monotonic() - t0:.1f}s")
@@ -530,6 +533,7 @@ async def main():
             # Re-approve so the plan is on screen as approved again before the next edit invalidates it.
             await page.locator('#rail button[data-go="export"]').click()
             await page.wait_for_selector("#exportPop:not([hidden])")
+            await page.locator("#exportLockOk").check()
             await page.locator("#exportGo").click()
             await page.wait_for_function("!!window.__cualign.state.plan?.approval")
 
@@ -978,6 +982,7 @@ async def main():
                 await page.wait_for_function("!document.querySelector('#rail button[data-go=\"export\"]').disabled", timeout=60000)
                 await page.locator('#rail button[data-go="export"]').click()
                 await page.wait_for_selector("#exportPop:not([hidden])")
+                await page.locator("#exportLockOk").check()
                 async with page.expect_download(timeout=180000):
                     await page.locator("#exportGo").click()
                 await page.wait_for_function("!!window.__cualign.state.plan?.approval")

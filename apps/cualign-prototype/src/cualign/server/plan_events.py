@@ -48,9 +48,11 @@ def open_run(ctx: ChatContext, store=None, preload=None) -> tuple[PlanRun, dict]
     cid, case = store.load_case(ctx.case_id)
     if ctx.base_plan_id and ctx.base_plan_id in store.plans and store.previous_calculation(ctx.base_plan_id):
         raise ValueError("이전 계산의 계획은 기준 계획이 될 수 없습니다")   # another core version's plan (answer-polish (10))
-    constraints = store.constraints_for(cid, ctx.base_plan_id).patched(ctx.constraints.changes())
+    before = store.constraints_for(cid, ctx.base_plan_id)
+    constraints = before.patched(ctx.constraints.changes())
     constraints.check_case(case.ids)
     store.case_constraints[cid] = constraints
+    store.add_edit(cid, before, constraints)   # what the dentist changed on the form, sent with this turn (request_check)
     run = PlanRun(ctx.request_id, cid, ctx.base_plan_id, constraints, step=ctx.step, opened=constraints)
     context = {"case_id": cid, "base_plan_id": ctx.base_plan_id, "constraints": constraints.model_dump(mode="json"),
                "teeth_fdi": constraints.teeth_fdi(),   # the tooth fields as set_constraints takes them (FDI)
@@ -219,7 +221,9 @@ class PlanEventsASGI:
             ctx = ChatContext.model_validate({**raw, "step": step} if step else raw) if raw is not None                 else ChatContext(case_id=STORE.active_case or "moderate", **({"step": step} if step else {}))
             preload = getattr(getattr(scope.get("app"), "state", None), "cualign_preload", None)  # set by worker.add_routes
             run, system = open_run(ctx, preload=preload)
-            run.text = user_text(data.get("messages"))   # every plan the turn makes is checked against it (core/request_check)
+            # the case keeps every turn's sentence, setup turns too, whatever the turn then does: every plan of the
+            # case is compared with all of them (core/request_check, Store.check_request)
+            STORE.add_request(run.case_id, user_text(data.get("messages")), run.opened)
             if sent is not None:
                 text = user_text(data.get("messages"))
                 STORE.turn_steps[run.case_id] = {"screen": recorded.replay_step(text, sent, as_sent=True),

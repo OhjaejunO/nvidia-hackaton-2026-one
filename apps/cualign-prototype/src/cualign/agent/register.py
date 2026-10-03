@@ -15,7 +15,6 @@ from cualign.server import rails_middleware  # noqa: F401  register the Guardrai
 from cualign.agent.context import CURRENT_RUN, track_task
 from cualign.agent import steps
 from cualign.core import limits as L, planner
-from cualign.core import request_check
 from cualign.core import skills as S
 from cualign.core.constraints import Constraints, ConstraintPatch, ToolConstraintPatch, reason_ko
 from cualign.core.service import PlanningService
@@ -264,7 +263,7 @@ async def cualign(config: CuAlignToolConfig, _builder: Builder) -> AsyncGenerato
         if run:
             if run.selected_plan_id and run.selected_plan_id != inp.plan_id:
                 raise ValueError("a final plan is already selected in this request")
-            run.selected_plan_id = inp.plan_id     # it carries request_check from when it was made (Store.put_plan)
+            run.selected_plan_id = inp.plan_id     # its request_check is the store's (Store.put_plan, approve)
         return {"type": "plan_selected", **summary(inp.plan_id)}
 
     async def _export_stl(inp: PlanIdInput) -> dict:
@@ -314,21 +313,15 @@ OFF_LOOP = {"propose_target", "plan_stages", "compare_strategies", "validate"}
 def step_gated(name, fn):
     """`fn` refused with steps.refusal when the current turn's step does not reach this tool (agent/steps.py): the
     model gets a normal result saying so and stops, instead of running the whole plan in a setup or target turn.
-    The calling task is noted as the turn's (context.track_task), so cutting the turn cancels it. The turn's sentence
-    is set for the tool (request_check.TURN): what the tool makes, the store checks against it."""
+    The calling task is noted as the turn's (context.track_task), so cutting the turn cancels it."""
     async def gated(inp):
         run = CURRENT_RUN.get()
         if run is not None and not steps.allowed(run.step, name):
             return steps.refusal(run.step, name)
         track_task()
-        asked = run is not None and run.text is not None and run.opened is not None   # MCP has no sentence
-        token = request_check.TURN.set((run.text, run.opened) if asked else None)
-        try:
-            if name in OFF_LOOP and run is not None:
-                return await asyncio.to_thread(_run_off_loop, run, fn, inp)   # to_thread copies the context
-            return await fn(inp)
-        finally:
-            request_check.TURN.reset(token)
+        if name in OFF_LOOP and run is not None:
+            return await asyncio.to_thread(_run_off_loop, run, fn, inp)
+        return await fn(inp)
     gated.__annotations__ = dict(fn.__annotations__)   # NAT reads the input schema from the annotation
     gated.__name__, gated.__doc__ = fn.__name__, fn.__doc__
     return gated

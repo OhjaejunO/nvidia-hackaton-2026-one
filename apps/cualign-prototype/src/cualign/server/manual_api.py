@@ -141,11 +141,13 @@ def add_manual_routes(app: FastAPI, *, store: Callable, require_target: Callable
             t = from_fdi(req.tooth)
             if t not in case.ids:
                 raise ValueError(f"이 스캔에 {req.tooth}번 치아가 없습니다.")
-            new = setup_edit(S.constraints_for(cid), set(case.ids), t, req)
+            old = S.constraints_for(cid)
+            new = setup_edit(old, set(case.ids), t, req)
             new.check_case(case.ids)
         except ValueError as e:
             raise HTTPException(400, reason_ko(e))
         S.case_constraints[cid] = new
+        S.add_edit(cid, old, new)   # the dentist's hand edit sets the field it changes (core/request_check)
         S.set_flow(cid, "setup", constraints=new, target_id=None, plan_id=None)
         return {"step": "setup", **setup_view(S, cid, new)}
 

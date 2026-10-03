@@ -150,15 +150,18 @@ function updateActions() {
   if (p?.approval && (!st || st.building)) pollExportStatus(p.plan_id);   // a reload or a revisit picks the build up
   if (p && dirty) $("planNotice").textContent = "조건 변경됨 — 새 계획을 생성한 뒤 승인하세요. 현재 3D는 이전 계획입니다.";
 }
+// the plan's locked teeth as the dentist reads them (FDI, sorted): what approval asks the dentist to confirm
+const lockFdi = (p) => (p?.constraints?.lock ?? []).map(fdi).sort((a, b) => a - b);
 async function approveCurrent() {
   const p = state.plan;
   if (!p || state.streaming || state.loading || constraintsDirty()) return;
   const revoke = !!p.approval;   // the 내보내기 popover asked the question; 승인 취소 needs none
   state.loading = true; updateActions();
   try {
+    // the locked teeth the export card showed and the dentist ticked: the server records them, and refuses without
     const result = await api("/api/plans/" + encodeURIComponent(p.plan_id) + "/approval",
       { method: revoke ? "DELETE" : "POST", headers: { "Content-Type": "application/json" },
-        ...(revoke ? {} : { body: JSON.stringify({ confirmed: true }) }) });
+        ...(revoke ? {} : { body: JSON.stringify({ confirmed: true, lock_fdi: lockFdi(p) }) }) });
     delete state.exportStatus[p.plan_id];   // approval starts (or finds) the build: ask the server again
     if (state.plan?.plan_id === p.plan_id) { state.plan = result; renderResult(result); }
   } catch (e) { addMsg("error", e.message); }
@@ -185,5 +188,5 @@ async function reviewCurrent() {
   finally { state.loading = false; updateActions(); }
 }
 
-export { approveCurrent, condWords, fillConstraints, readConstraints, renderCondState, renderPlanFail, reviewCurrent,
-  updateActions };
+export { approveCurrent, condWords, fillConstraints, lockFdi, readConstraints, renderCondState, renderPlanFail,
+  reviewCurrent, updateActions };

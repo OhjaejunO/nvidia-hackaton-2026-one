@@ -39,6 +39,8 @@ class ReplayRequest(BaseModel):
 
 class ApprovalRequest(BaseModel):
     confirmed: bool = False
+    # the locked teeth (FDI) the dentist confirmed on the screen; approval refuses without them (Store.approve)
+    lock_fdi: list[int] | None = None
 
 
 class ConfirmRequest(BaseModel):
@@ -219,7 +221,7 @@ def rule_based_plan(case_id=None, allow_extraction=None, stage_cap=None, order=N
     why = planner.unsupported_reasons(case)
     if why:
         return {"case_id": cid, "chosen": None, "unsupported": why, "tried": []}
-    c = STORE.constraints_for(cid, parent_plan_id)
+    before = STORE.constraints_for(cid, parent_plan_id)
     if changes is None:
         changes = {"stage_cap": stage_cap}
         if extraction is not None:            # the prescribed teeth (#56); [] = non-extraction
@@ -230,8 +232,9 @@ def rule_based_plan(case_id=None, allow_extraction=None, stage_cap=None, order=N
             changes["order"] = order
         if ipr_surfaces is not None:          # per-contact IPR (#57), Universal numbers as the CLI parsed them
             changes["ipr_surfaces"] = list(ipr_surfaces)
-    c = c.patched(changes)
+    c = before.patched(changes)
     c.check_case(case.ids)
+    STORE.add_edit(cid, before, c)   # the form's 다시 계산 / 조건으로 계산: the dentist set these by hand (request_check)
     service = PlanningService(STORE)
     ids = service.compare(cid, c, parent_plan_id=parent_plan_id)
     STORE.case_constraints[cid] = c
@@ -633,7 +636,7 @@ def add_api_routes(app: FastAPI, review=None, followup=None):
         if not req.confirmed:
             raise HTTPException(400, "의사의 명시적 확인이 필요합니다.")
         try:
-            approved = STORE.approve(plan_id)
+            approved = STORE.approve(plan_id, req.lock_fdi)
         except ValueError as e:
             raise HTTPException(409, str(e))
         _start_export(plan_id)   # the zip is built from now on, in the background (answer-polish (9))

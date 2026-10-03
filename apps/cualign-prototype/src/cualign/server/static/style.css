@@ -255,6 +255,8 @@ html.booting.h-case .layout, html.booting.h-check .layout { visibility: hidden; 
 .toast.in { transform: translate(-50%, 0); }
 .toast[hidden] { display: none; }
 .export-pop .export-skip { color: var(--amber-text); }
+.export-pop .export-lock { display: flex; gap: 6px; align-items: center; margin: 0 0 8px; }
+.export-pop .export-lock[hidden] { display: none; }
 .export-pop .export-skip[hidden] { display: none; }
 .export-why { align-self: center; font-size: 12px; color: var(--muted); white-space: nowrap; }
 .export-why:empty { display: none; }

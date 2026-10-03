@@ -56,7 +56,7 @@ def main():
                            rails=review.get("rails"), memo_chars=len(review["message"]),
                            memo_head=review["message"][:120])
                 if review["status"] == "passed" and res.json()["passed"]:
-                    ap = client.post(f"/api/plans/{pid}/approval", json={"confirmed": True})
+                    ap = client.post(f"/api/plans/{pid}/approval", json={"confirmed": True, "lock_fdi": STORE.lock_fdi(pid)})
                     row["approval_http"] = ap.status_code
             else:
                 row["detail"] = res.json().get("detail")
