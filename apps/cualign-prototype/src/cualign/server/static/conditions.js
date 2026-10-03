@@ -152,10 +152,15 @@ function updateActions() {
 }
 // the plan's locked teeth as the dentist reads them (FDI, sorted): what approval asks the dentist to confirm
 const lockFdi = (p) => (p?.constraints?.lock ?? []).map(fdi).sort((a, b) => a - b);
-async function approveCurrent() {
+// an approval counts on the export card only with the locked teeth the dentist ticked, equal to the plan's: one without
+// them (approved before round 4) or with others asks for the tick again (Codex re-check 2026-10-03 (4))
+const confirmedApproval = (p) => !!p?.approval && Array.isArray(p.approval.confirmed_lock_fdi)
+  && [...p.approval.confirmed_lock_fdi].sort((a, b) => a - b).join() === lockFdi(p).join();
+// approve: the export card's 확정 (POST, also over an approval that does not count); otherwise 승인 취소 (DELETE)
+async function approveCurrent(approve = false) {
   const p = state.plan;
   if (!p || state.streaming || state.loading || constraintsDirty()) return;
-  const revoke = !!p.approval;   // the 내보내기 popover asked the question; 승인 취소 needs none
+  const revoke = !approve && !!p.approval;   // the 내보내기 popover asked the question; 승인 취소 needs none
   state.loading = true; updateActions();
   try {
     // the locked teeth the export card showed and the dentist ticked: the server records them, and refuses without
@@ -188,5 +193,5 @@ async function reviewCurrent() {
   finally { state.loading = false; updateActions(); }
 }
 
-export { approveCurrent, condWords, fillConstraints, lockFdi, readConstraints, renderCondState, renderPlanFail,
-  reviewCurrent, updateActions };
+export { approveCurrent, condWords, confirmedApproval, fillConstraints, lockFdi, readConstraints, renderCondState,
+  renderPlanFail, reviewCurrent, updateActions };

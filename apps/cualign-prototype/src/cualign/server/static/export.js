@@ -2,7 +2,7 @@
 import { $, capOfMonths, monthsOfCap, state } from "./state.js";
 import { canvas, setView } from "./viewer.js";
 import { onPointerMove } from "./pick.js";
-import { approveCurrent, lockFdi, reviewCurrent, updateActions } from "./conditions.js";
+import { approveCurrent, confirmedApproval, lockFdi, reviewCurrent, updateActions } from "./conditions.js";
 import { planNo } from "./plans.js";
 import { addMsg } from "./chat.js";
 import { showPop } from "./panes.js";
@@ -12,7 +12,7 @@ import { showPop } from "./panes.js";
 const railExportBtn = () => document.querySelector('#rail button[data-go="export"]');
 const exportPopKey = () => state.plan?.plan_id + "|" + state.step;
 function openExportPop() {
-  const p = state.plan, again = !!p.approval, pop = $("exportPop");
+  const p = state.plan, again = confirmedApproval(p), pop = $("exportPop");
   $("exportTitle").textContent = again ? "다시 내려받기" : "승인하고 내려받기";
   $("exportWhat").textContent = [$("caseName").textContent.split(" · 총생")[0], `계획 ${planNo(p.plan_id)}`, `${p.stages?.length ?? 0}단계`, "STL zip"].join(" · ");
   $("exportAsk").textContent = again ? "의사 승인으로 확정된 계획입니다. 같은 zip 을 다시 받습니다." : "의사 승인으로 확정합니다. 조건·3D·검토 결과를 확인하셨나요?";
@@ -25,9 +25,13 @@ function openExportPop() {
   $("exportLockRow").hidden = again;
   $("exportLockOk").checked = false;
   $("exportGo").disabled = !again;
-  $("exportCheck").hidden = again || !chk || chk.status === "match";
-  $("exportCheck").textContent = chk?.status === "mismatch" ? "요청과 다릅니다: " + chk.reasons_ko.join("; ")
+  // an approval the server took off as it read the plan back (approval_voided), or one that does not count here
+  const off = p.approval_voided ? "이전 승인을 해제했습니다 — " + p.approval_voided.reason_ko
+    : p.approval && !again ? "고정 치아 확인이 맞지 않는 승인입니다. 고정 치아를 확인하고 다시 승인하세요." : "";
+  const said = chk?.status === "mismatch" ? "요청과 다릅니다: " + chk.reasons_ko.join("; ")
     : chk?.status === "needs_check" ? "확인 필요 — 읽지 못한 요청: " + chk.unread_ko.join(", ") : "";
+  $("exportCheck").hidden = again || !(off || said);
+  $("exportCheck").textContent = [off, said].filter(Boolean).join(" · ");
   state.exportPopFor = exportPopKey();
   showPop(pop, true);
   const r = railExportBtn().getBoundingClientRect(), mid = r.top + r.height / 2;
@@ -59,8 +63,8 @@ $("exportCancel").addEventListener("click", closeExportPop);
 $("exportLockOk").addEventListener("change", () => { $("exportGo").disabled = !$("exportLockOk").checked; });
 $("exportGo").addEventListener("click", async () => {
   closeExportPop();
-  if (!state.plan?.approval) await approveCurrent();
-  if (state.plan?.approval && $("stlLink").hasAttribute("href")) $("stlLink").click();
+  if (!confirmedApproval(state.plan)) await approveCurrent(true);
+  if (confirmedApproval(state.plan) && $("stlLink").hasAttribute("href")) $("stlLink").click();
 });
 // The server builds the zip on every download (5–11 s on a real scan, #119), and a link click shows nothing until the
 // file arrives: fetch it so the button says so meanwhile (and a refused download shows its reason instead of being
@@ -117,7 +121,7 @@ async function downloadStl() {
 }
 $("stlLink").addEventListener("click", (e) => { e.preventDefault(); downloadStl(); });
 $("exportRetry").addEventListener("click", () => { delete state.exportStatus[state.plan?.plan_id]; downloadStl(); });   // stl.zip starts a new build
-$("revokeBtn").addEventListener("click", approveCurrent);
+$("revokeBtn").addEventListener("click", () => approveCurrent());   // 승인 취소 (not the click event as `approve`)
 $("reviewBtn").addEventListener("click", reviewCurrent);
 $("cMonths").addEventListener("input", () => { const m = Number($("cMonths").value); $("cCap").value = m > 0 ? capOfMonths(m) : ""; });
 $("cCap").addEventListener("input", () => { const cap = Number($("cCap").value); $("cMonths").value = cap > 0 ? monthsOfCap(cap) : ""; });

@@ -6,7 +6,8 @@ the server, at the tool input only: the UI form, the recorded answers and the MC
 numbers) and Tooth keeps 2..15. (b) blocks approval unless the case's sentences and the plan's conditions match: three
 results (match / mismatch / needs_check, for what was not read), every turn's sentence on the case in order (setup turns
 too) and the dentist's hand edits, and approval only with the locked teeth (FDI) confirmed on the screen (round 4,
-after Codex re-check 2026-10-03 (3)).
+after Codex re-check 2026-10-03 (3)). Round 5 (re-check (4)): an approval without those teeth, or with others, does not
+carry over a restart, and no export door takes it.
 """
 import asyncio
 import json
@@ -598,3 +599,63 @@ def test_a_stages_turn_on_a_target_turn_target_answers_the_target_turn_sentence(
     tid = target_turn(REVISION, [("set_constraints", {"lock": lock})])
     plan = turn("단계로 나눠줘.", [("plan_stages", {"target_id": tid})], step="stages")[0]
     assert plan["request_check"]["status"] == status
+
+
+# ---- round 5: an approval counts only with the confirmed locked teeth, read back too (Codex re-check 2026-10-03 (4)) --
+
+def approved_after_a_restart(s):
+    """A plan (lock FDI 13, no sentence) approved with [13] on its copy read back from disk: the fingerprint is the one
+    a restart computes again, so only the confirmed teeth decide whether the approval carries over."""
+    svc = PlanningService(s)
+    pid = svc.stages(svc.target("moderate", "expansion_ipr", Constraints(lock=(6,))), None)
+    s.set_review(pid, REVIEW)
+    store_module.Store().approve(pid, [13])
+    return pid
+
+
+def rewrite_approval(pid, confirmed):
+    """The plan file as an older version wrote it: confirmed_lock_fdi left out (None), or other teeth."""
+    path = store_module.OUT_DIR / "plans" / f"{pid}.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if confirmed is None:
+        del data["approval"]["confirmed_lock_fdi"]
+    else:
+        data["approval"]["confirmed_lock_fdi"] = confirmed
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+@pytest.mark.parametrize("confirmed, why", [(None, "고정 치아를 확인한 기록이 없는 승인입니다"),
+                                            ([25], "확인한 고정 치아(25)와 계획의 고정 치아(13)가 다른 승인입니다")])
+def test_an_approval_read_back_without_the_confirmed_teeth_is_taken_off(isolated, confirmed, why):
+    """Codex re-check (4) 🔴: a plan approved before round 4 kept its approval through a restart, and the screen offered
+    다시 내려받기 without the tick. Read back, it is not approved and says why (the export card shows it)."""
+    pid = approved_after_a_restart(isolated)
+    rewrite_approval(pid, confirmed)
+    shown = store_module.Store().plan_json(pid)
+    assert shown["approval"] is None
+    assert shown["approval_voided"]["reason_ko"].startswith(why)
+
+
+def test_an_approval_with_the_confirmed_teeth_carries_over_a_restart(isolated):
+    pid = approved_after_a_restart(isolated)
+    fresh = store_module.Store()
+    assert fresh.plan_json(pid)["approval"]["confirmed_lock_fdi"] == [13] and "approval_voided" not in fresh.plans[pid]
+    fresh.require_approved(pid)
+
+
+@pytest.mark.parametrize("confirmed", [None, [25]])
+def test_no_export_takes_an_approval_without_the_confirmed_teeth(isolated, confirmed):
+    """The export door itself, nothing read back: an approval that did not come through approve() with the ticked teeth
+    never exports (stl.zip, the agent's and the MCP export all ask require_approved)."""
+    svc = PlanningService(isolated)
+    pid = svc.stages(svc.target("moderate", "expansion_ipr", Constraints(lock=(6,))), None)
+    isolated.set_review(pid, REVIEW)
+    isolated.approve(pid, [13])
+    approval = isolated.plans[pid]["approval"]
+    if confirmed is None:
+        del approval["confirmed_lock_fdi"]
+    else:
+        approval["confirmed_lock_fdi"] = confirmed
+    with client() as c:
+        r = c.get(f"/api/plans/{pid}/stl.zip")
+    assert r.status_code == 409 and r.json()["detail"].endswith("고정 치아를 확인하고 다시 승인한 뒤 내보낼 수 있습니다.")

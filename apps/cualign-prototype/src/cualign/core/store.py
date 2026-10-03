@@ -53,8 +53,28 @@ def _plan_from_file(data: dict) -> dict:
             # approved under conditions without the extraction teeth: the approval does not carry over (#98 review);
             # shown as not approved, so the screen asks for a new approval instead of offering an export it refuses
             data["approval"] = None
+    if data.get("approval") and (why := _unconfirmed(data["approval"], data.get("constraints"))):
+        # approved before round 4 (no confirmed teeth) or with other teeth: the approval does not carry over, and why
+        # stays on the plan, so the screen asks for the tick again (Codex re-check 2026-10-03 (4))
+        data["approval_voided"] = {"reason_ko": why + ". 고정 치아를 확인하고 다시 승인하세요.",
+                                   "approved_at": data["approval"].get("approved_at")}
+        data["approval"] = None
     data["_from_disk"] = True
     return data
+
+
+def _unconfirmed(approval: dict, constraints) -> str | None:
+    """Why an approval does not count: it carries no locked teeth the dentist confirmed (approved before round 4), or
+    other teeth than the plan's (FDI). None when it counts. Checked as a plan is read back and again at export."""
+    confirmed = approval.get("confirmed_lock_fdi")
+    if confirmed is None:
+        return "고정 치아를 확인한 기록이 없는 승인입니다"
+    locked = sorted(to_fdi(t) for t in constraints.lock) if isinstance(constraints, Constraints) else None
+    if sorted(confirmed) != locked:
+        mine = ", ".join(map(str, sorted(confirmed))) or "없음"
+        plan = "읽지 못함" if locked is None else ", ".join(map(str, locked)) or "없음"
+        return f"확인한 고정 치아({mine})와 계획의 고정 치아({plan})가 다른 승인입니다"
+    return None
 
 
 def planner_version() -> str:
@@ -435,6 +455,10 @@ class Store:
         self.require_current_input(p["case_id"], p.get("input_revision"))
         if not p["approval"] or p["approval"]["fingerprint"] != self.fingerprint(pid):
             raise ValueError("의사가 현재 계획을 승인한 뒤 내보낼 수 있습니다.")
+        if why := _unconfirmed(p["approval"], p["constraints"]):
+            # every export door (stl.zip, the agent's and the MCP export) comes here: an approval that did not come
+            # through approve() with the ticked teeth never exports (Codex re-check 2026-10-03 (4))
+            raise ValueError(why + ". 고정 치아를 확인하고 다시 승인한 뒤 내보낼 수 있습니다.")
 
     def set_review(self, pid: str, result: dict) -> dict:
         record = self._record(pid)
