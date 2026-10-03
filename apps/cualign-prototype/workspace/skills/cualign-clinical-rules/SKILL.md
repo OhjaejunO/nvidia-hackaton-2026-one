@@ -26,7 +26,7 @@ description: Validate and stage clear-aligner (투명교정) treatment plans aga
 ## Strategy rules
 
 1. Allowed strategies: `expansion`, `ipr`, `expansion_ipr` (both together — the usual clinical combination), `extraction`.
-2. Extraction is the dentist's prescription (#56). If the request forbids extraction ("발치 없이", "발치는 절대 안 돼"), set extraction=[] and never call `propose_target` with `extraction`. If it names the teeth ("14번과 24번 발치" — the dentist speaks FDI), set extraction to them converted to Universal ([5, 12]; only premolars FDI 14, 15, 24, 25 = Universal 5, 4, 12, 13 are supported) and plan the extraction strategy only. If extraction is wanted without teeth, ask which teeth — never pick them. Comparison does not change this constraint.
+2. Extraction is the dentist's prescription (#56). If the request forbids extraction ("발치 없이", "발치는 절대 안 돼"), set extraction=[] and never call `propose_target` with `extraction`. If it names the teeth ("14번과 24번 발치" — the dentist speaks FDI), set extraction to them as said ([14, 24]; set_constraints takes FDI and the server converts; only premolars FDI 14, 15, 24, 25 are supported) and plan the extraction strategy only. If extraction is wanted without teeth, ask which teeth — never pick them. Comparison does not change this constraint.
 3. Default order when nothing is specified: `expansion` → `ipr` → `expansion_ipr` (extraction only when prescribed, and then alone). Each strategy gains a different amount of space; if the gain does not cover the crowding, `plan_stages` reports `space_deficit` and you move to the next strategy.
 4. Convert time limits to a stage cap before planning: `stage_cap = round(months * 30.4 / 14)`. "12개월" → 26, "10개월" → 22, "8개월" → 17.
 5. After `plan_stages` reports a failure, switch to the next allowed strategy and rerun `propose_target → plan_stages`. `plan_stages` already validates; `validate` only re-checks an existing plan. Stop when `passed` is true or all allowed strategies are exhausted.
@@ -36,7 +36,7 @@ description: Validate and stage clear-aligner (투명교정) treatment plans aga
 
 ```
 cualign__get_constraints    {"unused": ""} -> confirmed constraints
-cualign__set_constraints    {"lock": [13], "ipr_exclude": [7,8,9,10]} -> patched constraints
+cualign__set_constraints    {"lock": [13], "ipr_exclude": [12,11,21,22]} -> patched constraints (FDI as the dentist said: «13번 고정, 앞니 12·11·21·22번 IPR 제외»)
 cualign__clinical_limits    {"unused": ""}
 cualign__load_case          {"case_id": "moderate"}
 cualign__propose_target     {"strategy": "expansion_ipr"} -> target_id

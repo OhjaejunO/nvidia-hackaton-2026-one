@@ -50,7 +50,7 @@ def test_preload_off_keeps_the_context_as_before(tmp_path, monkeypatch, store):
     with PlanningLLM() as llm, serve(tmp_path, monkeypatch, llm, edit=_set({"case": False, "limits": False, "skill": None})) as client:
         ask(client, "/chat/stream", PLAN, cualign={"case_id": "moderate"})
     ctx = _context(llm)
-    assert set(ctx) == {"case_id", "base_plan_id", "constraints", "conditions_ko", "step", "step_ko"}
+    assert set(ctx) == {"case_id", "base_plan_id", "constraints", "teeth_fdi", "conditions_ko", "step", "step_ko"}
 
 
 def test_absent_block_means_nothing_extra(tmp_path, monkeypatch, store):
@@ -58,7 +58,7 @@ def test_absent_block_means_nothing_extra(tmp_path, monkeypatch, store):
         cfg["function_groups"]["cualign"].pop("context_preload")
     with PlanningLLM() as llm, serve(tmp_path, monkeypatch, llm, edit=drop) as client:
         ask(client, "/chat/stream", PLAN, cualign={"case_id": "moderate"})
-    assert set(_context(llm)) == {"case_id", "base_plan_id", "constraints", "conditions_ko", "step", "step_ko"}
+    assert set(_context(llm)) == {"case_id", "base_plan_id", "constraints", "teeth_fdi", "conditions_ko", "step", "step_ko"}
 
 
 def test_failing_view_is_left_out_not_a_500(tmp_path, monkeypatch, store, caplog):

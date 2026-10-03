@@ -514,7 +514,7 @@ def test_tool_contract_matches_checks(tmp_path, monkeypatch):
             token = CURRENT_RUN.set(PlanRun("contract", "moderate", None, Constraints()))
             try:
                 await fns["load_case"].ainvoke({"case_id": "moderate"})
-                cons = await fns["set_constraints"].ainvoke({"stage_cap": 52, "lock": [3]})
+                cons = await fns["set_constraints"].ainvoke({"stage_cap": 52, "lock": [16]})   # FDI 16 = app tooth 3
                 target = await fns["propose_target"].ainvoke({"strategy": "ipr"})
                 plan = await fns["plan_stages"].ainvoke({"target_id": target["target_id"]})
                 valid = await fns["validate"].ainvoke({"plan_id": plan["plan_id"]})

@@ -253,17 +253,18 @@ class ReferenceAgent:
 
     def _constraints(self, compare: bool, text: str) -> dict:
         """Only what the dentist stated (set_constraints: omitted = keep)."""
-        patch = {}
+        from cualign.core.fdi import to_fdi
+        patch = {}   # the spec sentences use app numbers (written before #113); set_constraints takes FDI
         if self.st["known_extraction"]:
-            patch["extraction"] = self.st["extraction"]
+            patch["extraction"] = [to_fdi(t) for t in self.st["extraction"]]
         if self.st["known_months"]:
             patch["stage_cap" if self.cap else "clear_stage_cap"] = self.cap or True
         if self.st["order"] != "simultaneous":
             patch["order"] = self.st["order"]
         if self.st["lock"]:
-            patch["lock"] = sorted(self.st["lock"])
+            patch["lock"] = [to_fdi(t) for t in sorted(self.st["lock"])]
         if self.st["ipr_exclude"]:
-            patch["ipr_exclude"] = sorted(self.st["ipr_exclude"])
+            patch["ipr_exclude"] = [to_fdi(t) for t in sorted(self.st["ipr_exclude"])]
         if self.st["ipr_surfaces"] is not None:
             patch["ipr_surfaces"] = self.st["ipr_surfaces"]
         return patch

@@ -227,6 +227,14 @@ class Constraints(BaseModel):
         if (set(self.lock) | set(self.ipr_exclude) | set(self.extraction) | contacts) - set(ids):
             raise ValueError("constraint refers to a tooth absent from this case")
 
+    def teeth_fdi(self) -> dict:
+        """The tooth fields as the set_constraints tool takes them (FDI, ToolConstraintPatch): the model keeps the
+        existing teeth of a full list by copying these, never by converting the Universal fields itself."""
+        from .fdi import to_fdi
+        return {"extraction": [to_fdi(t) for t in self.extraction], "lock": [to_fdi(t) for t in self.lock],
+                "ipr_exclude": [to_fdi(t) for t in self.ipr_exclude],
+                "ipr_surfaces": [[to_fdi(a), to_fdi(b), mm] for a, b, mm in self.ipr_surfaces]}
+
 
 class ConstraintPatch(BaseModel):
     """null means keep. A model filling every schema field with null must not change anything.
@@ -280,3 +288,55 @@ class ConstraintPatch(BaseModel):
         elif self.stage_cap is not None:
             result["stage_cap"] = self.stage_cap
         return result
+
+
+FdiTooth = Annotated[int, Field(strict=True, ge=11, le=28)]   # upper-arch FDI; 19 and 20 are refused by from_fdi
+
+
+class ToolConstraintPatch(ConstraintPatch):
+    """The set_constraints tool's input: the tooth lists in the dentist's FDI numbers as spoken, like ipr_surfaces.
+    The model only copies numbers; the conversion to Universal happens here, in the server (#113 · a live revision
+    sent lock [13] for «13번 치아» and FDI 25 was locked). The UI form, the recorded answers and the MCP tool keep
+    ConstraintPatch (Universal), so Tooth and the stored constraints do not change.
+
+    The fields keep the numbers as sent and changes() converts them, once: the agent's tool call is validated twice
+    (LangChain's args_schema, then NAT's input conversion), so a converting validator converted twice. That refused
+    every ipr_surfaces prescription on the agent path (FDI 11 -> 8 -> «not an upper-arch FDI number: 8»)."""
+    extraction: list[FdiTooth] | None = Field(
+        default=None, description="Teeth the dentist prescribed to extract, FDI numbers as spoken: «14번과 24번 발치» = "
+                                  "[14, 24]. [] = non-extraction. Never choose teeth yourself: if extraction is allowed "
+                                  "but no teeth were named, ask.")
+    lock: list[FdiTooth] | None = Field(
+        default=None, description="Teeth that must not move, FDI numbers as spoken: «13번 치아는 움직이지 말고» = [13]. "
+                                  "A full list: keep the teeth already in teeth_fdi.lock. [] clears it.")
+    ipr_exclude: list[FdiTooth] | None = Field(
+        default=None, description="Teeth with no IPR, FDI numbers as spoken. A full list: keep the teeth already in "
+                                  "teeth_fdi.ipr_exclude. [] clears it.")
+
+    @field_validator("extraction", "lock", "ipr_exclude")
+    @classmethod
+    def fdi_teeth(cls, value):
+        """Upper-arch FDI numbers only (19 and 20 are not teeth), kept as sent."""
+        from .fdi import from_fdi
+        for t in value or ():
+            from_fdi(t)
+        return value
+
+    @field_validator("ipr_surfaces")
+    @classmethod
+    def fdi_to_universal(cls, value):   # the same name replaces ConstraintPatch's converting validator
+        """Checked as ConstraintPatch checks it, kept as sent (FDI)."""
+        if value is not None:
+            ConstraintPatch(ipr_surfaces=value)
+        return value
+
+    def changes(self):
+        """ConstraintPatch.changes() in the app's Universal numbers: the one conversion of the tool's FDI input."""
+        from .fdi import from_fdi
+        out = super().changes()
+        for field in ("extraction", "lock", "ipr_exclude"):
+            if field in out:
+                out[field] = [from_fdi(t) for t in out[field]]
+        if "ipr_surfaces" in out:
+            out["ipr_surfaces"] = ConstraintPatch(ipr_surfaces=out["ipr_surfaces"]).ipr_surfaces
+        return out

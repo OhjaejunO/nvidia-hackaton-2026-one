@@ -19,6 +19,8 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
+from cualign.core.fdi import from_fdi
+
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "out" / "nim-live"
 OUT.mkdir(parents=True, exist_ok=True)
@@ -175,8 +177,9 @@ async def main():
                 verdict["export_bytes"] = len(after.content)
 
             # --- turn 2: revision keeps the earlier constraints -----------------
-            ctx2 = {"request_id": "live-2", "case_id": "moderate", "base_plan_id": plan_id,
-                    "constraints": {"lock": [13]}}
+            # No lock in the context: the model must read «13번» (FDI) from the sentence. FDI 13 is app tooth 6; a
+            # pre-injected Universal [13] (FDI 25) once hid that the live model locked the wrong tooth.
+            ctx2 = {"request_id": "live-2", "case_id": "moderate", "base_plan_id": plan_id, "constraints": {}}
             events2, answer2, elapsed2 = await converse(client, url, REVISION, ctx2, log)
             sel2 = pick(events2, "plan_selected")
             verdict["turn2_elapsed_s"] = round(elapsed2, 1)
@@ -189,12 +192,13 @@ async def main():
                 verdict["turn2_review"] = sel2["review"]
                 d2 = (await client.get(url + f"/api/plans/{sel2['plan_id']}", timeout=30)).json()
                 verdict["turn2_constraints"] = d2["constraints"]
-                verdict["turn2_lock_applied"] = d2["constraints"]["lock"] == [13]
+                verdict["turn2_lock_applied"] = d2["constraints"]["lock"] == [from_fdi(13)]
+                verdict["turn2_request_check"] = d2.get("request_check")
                 verdict["turn2_no_extraction_kept"] = d2["constraints"]["allow_extraction"] is False
                 verdict["turn2_order_kept"] = d2["constraints"]["order"]
                 verdict["turn2_approval_reset"] = d2["approval"] is None
                 verdict["turn2_locked_tooth_still"] = all(
-                    st.get("13") == [0, 0, 0] for st in d2["stages"])
+                    st.get(str(from_fdi(13))) == [0, 0, 0] for st in d2["stages"])
             ctxev = pick(events2, "plan_context")
             verdict["turn2_plan_context"] = ctxev.get("constraints") if ctxev else None
     finally:

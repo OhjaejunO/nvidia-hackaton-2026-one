@@ -51,8 +51,9 @@ def open_run(ctx: ChatContext, store=None, preload=None) -> tuple[PlanRun, dict]
     constraints = store.constraints_for(cid, ctx.base_plan_id).patched(ctx.constraints.changes())
     constraints.check_case(case.ids)
     store.case_constraints[cid] = constraints
-    run = PlanRun(ctx.request_id, cid, ctx.base_plan_id, constraints, step=ctx.step)
+    run = PlanRun(ctx.request_id, cid, ctx.base_plan_id, constraints, step=ctx.step, opened=constraints)
     context = {"case_id": cid, "base_plan_id": ctx.base_plan_id, "constraints": constraints.model_dump(mode="json"),
+               "teeth_fdi": constraints.teeth_fdi(),   # the tooth fields as set_constraints takes them (FDI)
                "conditions_ko": constraints.describe_ko(),   # the answer's 조건 line, FDI, written by the server (#113)
                "step": ctx.step, "step_ko": STEP_RULE_KO[ctx.step]}   # how far this turn goes (workspace/AGENTS.md «Steps»)
     flow = store.flow.get(cid) if hasattr(store, "flow") else None
@@ -218,6 +219,7 @@ class PlanEventsASGI:
             ctx = ChatContext.model_validate({**raw, "step": step} if step else raw) if raw is not None                 else ChatContext(case_id=STORE.active_case or "moderate", **({"step": step} if step else {}))
             preload = getattr(getattr(scope.get("app"), "state", None), "cualign_preload", None)  # set by worker.add_routes
             run, system = open_run(ctx, preload=preload)
+            run.text = user_text(data.get("messages"))   # select_plan checks it against the conditions (core/request_check)
             if sent is not None:
                 text = user_text(data.get("messages"))
                 STORE.turn_steps[run.case_id] = {"screen": recorded.replay_step(text, sent, as_sent=True),

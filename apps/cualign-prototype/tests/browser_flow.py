@@ -24,7 +24,6 @@ from cualign.agent import register
 from cualign.agent.context import CURRENT_RUN
 from cualign.agent.reviewer import review_plan
 from cualign.core import store as store_module
-from cualign.core.constraints import ConstraintPatch
 from cualign.server import api, plan_events
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -186,9 +185,9 @@ async def fake_chat(request: Request):
             # Exercise actual NAT tool functions, but no external LLM. Each call streams its start and end rows as NAT
             # does, a moment apart so the screen shows them running (the tool line's seconds, the 3D chip's words, the
             # rule check's sweep).
-            yield nat_step("Start", "set_constraints", {"ipr_exclude": [7, 8, 9, 10]}, "s1"); await asyncio.sleep(0.3)
-            await tool("set_constraints").ainvoke(ConstraintPatch(ipr_exclude=[7,8,9,10]))
-            yield nat_step("End", "set_constraints", {"ipr_exclude": [7, 8, 9, 10]}, "s1")
+            yield nat_step("Start", "set_constraints", {"ipr_exclude": [12, 11, 21, 22]}, "s1"); await asyncio.sleep(0.3)
+            await tool("set_constraints").ainvoke({"ipr_exclude": [12, 11, 21, 22]})   # FDI, stored as Universal 7..10
+            yield nat_step("End", "set_constraints", {"ipr_exclude": [12, 11, 21, 22]}, "s1")
             yield nat_step("Start", "compare_strategies", {}, "s2"); await asyncio.sleep(0.3)
             result = await tool("compare_strategies").ainvoke(register.CompareInput())
             yield nat_step("End", "compare_strategies", {}, "s2")

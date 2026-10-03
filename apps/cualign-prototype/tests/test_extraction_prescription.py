@@ -217,14 +217,14 @@ def test_the_agent_tool_refuses_as_a_normal_result(tmp_path, monkeypatch):
         tool = next(fn for key, fn in tools.items() if key.split("__")[-1] == "set_constraints")
         token = CURRENT_RUN.set(PlanRun("r1", "mild", None, Constraints()))
         try:
-            for patch, why in ((ConstraintPatch(allow_extraction=True), "발치할 치아 번호"),
-                               (ConstraintPatch(extraction=[7]), "소구치"),
-                               (ConstraintPatch(stage_cap=40, clear_stage_cap=True), "")):
+            for patch, why in (({"allow_extraction": True}, "발치할 치아 번호"),
+                               ({"extraction": [12]}, "소구치"),   # FDI 12 (app 7) is not a premolar
+                               ({"stage_cap": 40, "clear_stage_cap": True}, "")):
                 r = await tool.ainvoke(patch)            # never raises: the agent would retry
                 assert r["rejected"] and why in r["note"] and r["extraction"] == []
             without_5 = Case({i: m for i, m in s.cases["mild"].mesh.items() if i != 5}, name="no-5")
             s.cases["mild"] = without_5
-            r = await tool.ainvoke(ConstraintPatch(extraction=[5, 12]))   # a tooth the case does not have
+            r = await tool.ainvoke({"extraction": [14, 24]})   # FDI 14 = app 5, a tooth the case does not have
             assert r["rejected"] and r["extraction"] == []
         finally:
             CURRENT_RUN.reset(token)

@@ -33,7 +33,7 @@ class SetupLLM(FakeLLM):
     def reply(self, req):
         n = len(self.requests)
         if n == 1:
-            return {"role": "assistant", "content": "", "tool_calls": [_call(n, "cualign__set_constraints", {"extraction": [5, 12]})]}
+            return {"role": "assistant", "content": "", "tool_calls": [_call(n, "cualign__set_constraints", {"extraction": [14, 24]})]}   # FDI, as said
         if n == 2:
             return {"role": "assistant", "content": "", "tool_calls": [_call(n, "cualign__propose_target", {"strategy": "extraction"})]}
         return {"role": "assistant", "content": "14·24 발치, IPR 없음으로 셋업했습니다. 이대로 목표 배열을 만들까요?"}

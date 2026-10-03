@@ -62,21 +62,21 @@ def test_content_safety_custom_policy_matches_policy_file():
     assert deployed and all(name in text for name in deployed), [n for n in deployed if n not in text]
 
 
-def test_planner_instructions_convert_fdi_to_universal():
-    """#113: the dentist speaks FDI (14, 24), the tools take Universal (5, 12). The planner's instructions carry the
-    conversion table and the extraction example in FDI, and the skill text (preloaded into the same context) agrees."""
+def test_planner_instructions_pass_fdi_as_said():
+    """#113: the dentist speaks FDI (14, 24) and set_constraints takes FDI; the server converts (the model converting
+    locked FDI 25 for «13번 치아» in a live revision). The planner's instructions carry the examples as said and no
+    conversion table, and the skill text (preloaded into the same context) agrees."""
     import re
     import yaml
     from nat.utils.io.yaml_tools import yaml_load   # resolves the file:// include (workspace/AGENTS.md)
     text = yaml_load(ROOT / "configs" / "workflow.yml")["workflow"]["additional_instructions"]
     flat = " ".join(text.split())
-    assert "FDI 18 17 16 15 14 13 12 11 -> Universal 1 2 3 4 5 6 7 8" in flat
-    assert "FDI 21 22 23 24 25 26 27 28 -> Universal 9 10 11 12 13 14 15 16" in flat
-    assert '"14번과 24번 발치" -> [5, 12]' in flat and "Never write a Universal number to the dentist" in flat
-    for fdi, u in ((18, 1), (11, 8), (21, 9), (28, 16), (14, 5), (15, 4), (24, 12), (25, 13)):   # the stated formula
-        assert (19 - fdi if fdi < 20 else fdi - 12) == u
+    assert "set_constraints takes FDI too" in flat and '"13번 치아는 움직이지 말고" -> lock [13]' in flat
+    assert '"14번과 24번 발치" -> [14, 24]' in flat and "Never convert a tooth number" in flat
+    assert "-> Universal" not in flat and "Never write an app number to the dentist" in flat
     skill = (ROOT / "workspace" / "skills" / "cualign-clinical-rules" / "SKILL.md").read_text(encoding="utf-8")
-    assert "14번과 24번 발치" in skill and re.search(r"5번과 12번 발치", skill) is None
+    assert "14번과 24번 발치" in skill and "as said ([14, 24]" in skill and re.search(r"5번과 12번 발치", skill) is None
+    assert "Universal [5, 12]" not in skill and "FDI as the dentist said" in skill
     # the review memo is shown on the same screen: its tooth numbers are FDI too (configured and built-in instructions)
     from cualign.agent.reviewer import DEFAULT_INSTRUCTIONS
     memo = " ".join(yaml.safe_load((ROOT / "configs" / "workflow.yml").read_text(encoding="utf-8"))["functions"]["reviewer"]["instructions"].split())

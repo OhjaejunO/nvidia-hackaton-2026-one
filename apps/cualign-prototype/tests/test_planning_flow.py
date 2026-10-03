@@ -175,11 +175,12 @@ def test_nat_tools_keep_constraints_select_earlier_candidate_and_deny_export(iso
             assert CURRENT_RUN.get().selected_plan_id == selected != plans[-1]["plan_id"]
             # Re-stating the same conditions after targets exist is a no-op, not a hard error:
             # raising here made the ReAct agent retry until its iteration limit.
-            assert await tool("set_constraints").ainvoke(ConstraintPatch(lock=[13])) == register.constraints_json(c)
-            assert await tool("set_constraints").ainvoke(ConstraintPatch()) == register.constraints_json(c)
+            # The tool takes FDI (the dentist's numbers): FDI 25 is the app's tooth 13.
+            assert await tool("set_constraints").ainvoke({"lock": [25]}) == register.constraints_json(c)
+            assert await tool("set_constraints").ainvoke({}) == register.constraints_json(c)
             # A real change after targets exist is refused as a normal result, never an exception:
             # a tool error makes the ReAct agent retry with new arguments until it runs out.
-            refused = await tool("set_constraints").ainvoke(ConstraintPatch(lock=[]))
+            refused = await tool("set_constraints").ainvoke({"lock": []})
             assert refused["rejected"] == {"lock": []} and refused["note"]
             assert refused["lock"] == [13] and CURRENT_RUN.get().constraints == c
             assert "moderate" not in isolated.case_constraints  # nothing was written

@@ -1,9 +1,10 @@
 """#113 / leak: two real conversations through `nat serve` + /chat/stream, as the screen sends them.
 
 A. Sample poseidon-000131, the card's «에이전트에게 계획 맡기기» sentence (sample.request) with the sample's constraints.
-C. Sample poseidon-000097, its FDI-only card sentence (제1소구치 14·24 발치) with extraction cleared in the context: the model must convert 14·24 to [5, 12] itself.
+C. Sample poseidon-000097, its FDI-only card sentence (제1소구치 14·24 발치) with extraction cleared in the context: the model
+   passes 14·24 as said (set_constraints takes FDI) and the stored plan must hold [5, 12] (Universal).
    Observed on main #115: no tool call, English reasoning streamed as the answer, no plan_selected.
-B. Case moderate, «14번과 24번 발치로 계획 짜줘.» — the tools must receive extraction [5, 12] (Universal).
+B. Case moderate, «14번과 24번 발치로 계획 짜줘.» — set_constraints gets [14, 24] and the plan stores extraction [5, 12] (Universal).
 Never prints the API key. Writes out/nim-live/fdi-leak.json (events, tool args, answers) and prints a verdict.
 
 Costs real NVIDIA usage: two planning conversations (several model calls each) plus rails.

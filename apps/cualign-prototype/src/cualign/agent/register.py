@@ -15,8 +15,9 @@ from cualign.server import rails_middleware  # noqa: F401  register the Guardrai
 from cualign.agent.context import CURRENT_RUN, track_task
 from cualign.agent import steps
 from cualign.core import limits as L, planner
+from cualign.core import request_check
 from cualign.core import skills as S
-from cualign.core.constraints import Constraints, ConstraintPatch, reason_ko
+from cualign.core.constraints import Constraints, ConstraintPatch, ToolConstraintPatch, reason_ko
 from cualign.core.service import PlanningService
 from cualign.core.store import OUT_DIR, STORE
 
@@ -92,9 +93,9 @@ def limits_view() -> dict:
 
 
 def constraints_json(c) -> dict:
-    """What the model reads for a Constraints: the fields (Universal, for tool calls) plus the dentist's 조건 line
-    (conditions_ko, FDI) to copy into the answer as it is (#113)."""
-    return {**c.model_dump(mode="json"), "conditions_ko": c.describe_ko()}
+    """What the model reads for a Constraints: the fields (Universal), the tooth fields as set_constraints takes them
+    (teeth_fdi, FDI) and the dentist's 조건 line (conditions_ko, FDI) to copy into the answer as it is (#113)."""
+    return {**c.model_dump(mode="json"), "teeth_fdi": c.teeth_fdi(), "conditions_ko": c.describe_ko()}
 
 
 def case_view(case) -> dict:
@@ -180,8 +181,9 @@ async def cualign(config: CuAlignToolConfig, _builder: Builder) -> AsyncGenerato
         cid, _ = current_case()
         return constraints_json(constraints_for(cid))
 
-    async def _set_constraints(inp: ConstraintPatch) -> dict:
-        """사용자가 명시적으로 변경한 조건만 전달한다. null과 생략은 모두 유지를 뜻한다. []는 치아 목록 해제, clear_stage_cap:true는 기간 상한 해제. IPR 한도는 면당 mm."""
+    async def _set_constraints(inp: ToolConstraintPatch) -> dict:
+        """사용자가 명시적으로 변경한 조건만 전달한다. null과 생략은 모두 유지를 뜻한다. []는 치아 목록 해제, clear_stage_cap:true는 기간 상한 해제. IPR 한도는 면당 mm.
+        치아 번호(extraction·lock·ipr_exclude·ipr_surfaces)는 의사가 말한 FDI 번호 그대로 넣는다. 변환은 서버가 한다."""
         cid, case = current_case()
         run = CURRENT_RUN.get()
         current = constraints_for(cid)
@@ -263,6 +265,11 @@ async def cualign(config: CuAlignToolConfig, _builder: Builder) -> AsyncGenerato
             if run.selected_plan_id and run.selected_plan_id != inp.plan_id:
                 raise ValueError("a final plan is already selected in this request")
             run.selected_plan_id = inp.plan_id
+            if run.text is not None and run.opened is not None:
+                # the turn's sentence against the change it made to the conditions; a mismatch blocks approval
+                c = p["constraints"]
+                c = c if isinstance(c, Constraints) else Constraints.model_validate(c)
+                STORE.set_request_check(inp.plan_id, request_check.check(run.text, run.opened, c))
         return {"type": "plan_selected", **summary(inp.plan_id)}
 
     async def _export_stl(inp: PlanIdInput) -> dict:

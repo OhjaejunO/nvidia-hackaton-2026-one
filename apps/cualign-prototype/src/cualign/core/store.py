@@ -293,6 +293,9 @@ class Store:
                 # a rule plan's run (the strategies one POST /api/plan tried): only on those plans, so the approval
                 # fingerprint of every other plan, and of plan files written before it, stays what it was
                 **({"rule_run": dict(p["rule_run"])} if p.get("rule_run") else {}),
+                # the agent turn's sentence against the plan's conditions (core/request_check), the same way: only on
+                # plans an agent turn selected
+                **({"request_check": dict(p["request_check"])} if p.get("request_check") else {}),
                 "stages": [{str(i): np.round(v, 4).tolist() for i, v in st.items()} for st in p["stages"]],
                 # degrees about each crown's vertical axis through its centroid (pivot), per stage
                 "rotations": [{str(i): round(float(y), 3) for i, y in getattr(st, "yaw", {}).items()} for st in p["stages"]],
@@ -317,6 +320,10 @@ class Store:
             raise ValueError("규칙 위반 계획은 승인할 수 없습니다.")
         if p["review"]["status"] not in ("passed", "skipped"):
             raise ValueError("검토가 완료되지 않았습니다. 검토 실패/미실행 계획은 승인할 수 없습니다.")
+        check = p.get("request_check") or {}
+        if check.get("status") == "mismatch":
+            raise ValueError("요청 문장과 계획의 조건이 다릅니다: " + "; ".join(check.get("reasons_ko") or []) +
+                             ". 조건을 고쳐 다시 계획한 뒤 승인하세요.")
         p["approval"] = {"status": "approved", "approved_at": datetime.now(timezone.utc).isoformat(),
                          "fingerprint": self.fingerprint(pid)}
         self._persist(pid)
@@ -332,6 +339,14 @@ class Store:
         self.require_current_input(p["case_id"], p.get("input_revision"))
         if not p["approval"] or p["approval"]["fingerprint"] != self.fingerprint(pid):
             raise ValueError("의사가 현재 계획을 승인한 뒤 내보낼 수 있습니다.")
+
+    def set_request_check(self, pid: str, result: dict) -> dict:
+        """Record core/request_check's verdict on the plan an agent turn selected. Like a review, it resets approval."""
+        record = self._record(pid)
+        record["request_check"] = dict(result)
+        record["approval"] = None
+        self._persist(pid)
+        return dict(result)
 
     def set_review(self, pid: str, result: dict) -> dict:
         record = self._record(pid)
